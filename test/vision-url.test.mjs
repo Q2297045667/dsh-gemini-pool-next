@@ -46,6 +46,37 @@ test("refuses loopback, private, and link-local URL targets (SSRF red line)", as
   await assert.rejects(() => resolveImageInput("ftp://example.com/x.png"), /only http\(s\) is allowed/i);
 });
 
+test("refuses IPv4-mapped internal addresses and non-public IPv4 ranges before fetch", async () => {
+  await withStubbedFetch(
+    () => { throw new Error("unsafe target reached fetch"); },
+    async () => {
+      for (const address of ["::ffff:7f00:1", "::ffff:a00:1", "0:0:0:0:0:ffff:7f00:1", "::7f00:1", "fec0::1", "ff02::1", "100.64.0.1", "224.0.0.1"]) {
+        await assert.rejects(
+          () => resolveImageInput("http://example.test/x.png", {
+            lookup: async () => [{ address, family: address.includes(":") ? 6 : 4 }],
+          }),
+          /non-public address/i,
+          address,
+        );
+      }
+    },
+  );
+});
+
+test("accepts public IPv6 and IPv4-mapped public addresses", async () => {
+  await withStubbedFetch(
+    () => imageResponse(),
+    async () => {
+      for (const address of ["2606:4700:4700::1111", "::ffff:808:808"]) {
+        const result = await resolveImageInput("https://example.test/x.png", {
+          lookup: async () => [{ address, family: 6 }],
+        });
+        assert.equal(result.mimeType, "image/png");
+      }
+    },
+  );
+});
+
 test("fetches a public image URL into base64 with the response mime type", async () => {
   await withStubbedFetch(
     (url) => {

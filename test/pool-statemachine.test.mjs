@@ -166,7 +166,7 @@ test("getCandidateAccounts excludes disabled accounts and puts cooling accounts 
   }
 });
 
-test("manual mode excludes disabled accounts", async () => {
+test("manual mode locks to the selected account and never switches a disabled selection", async () => {
   const { manager, cleanup } = await createTempManager();
   try {
     await manager.addOrUpdateAccount({ email: "m1@example.com", refresh: "r1", access: "a1" });
@@ -178,14 +178,27 @@ test("manual mode excludes disabled accounts", async () => {
     await manager.updateConfig({
       schedulingMode: "manual",
       activeAccountId: id1,
-      disableThreshold: 1,
+      disableThreshold: 2,
     });
 
-    // When id1 is disabled, getCandidateAccounts still only returns non-disabled
+    assert.deepEqual((await manager.getCandidateAccounts()).map((account) => account.id), [id1]);
+    // Cooling remains a single-account retry, never an implicit backup.
+    await manager.markCooldown(id1, 10000, "cooling");
+    assert.deepEqual((await manager.getCandidateAccounts()).map((account) => account.id), [id1]);
+
+    // A disabled manual selection is unavailable, even when a backup is healthy.
     await manager.markCooldown(id1, undefined, "err");
-    const candidates = await manager.getCandidateAccounts("gemini");
-    assert.equal(candidates.length, 1);
-    assert.equal(candidates[0].id, id2);
+    await assert.rejects(() => manager.getCandidateAccounts("gemini"), /手动指定的账号已被禁用/);
+    assert.equal((await manager.getStatus()).activeAccountId, id1);
+
+    // Switching strategies restores normal healthy-account failover.
+    for (const schedulingMode of ["auto", "primary-backup"]) {
+      await manager.updateConfig({ schedulingMode });
+      assert.deepEqual((await manager.getCandidateAccounts()).map((account) => account.id), [id2]);
+    }
+    // Older files can contain a missing selection; preserve their healthy fallback.
+    await manager.updateConfig({ schedulingMode: "manual", activeAccountId: "missing-account" });
+    assert.deepEqual((await manager.getCandidateAccounts()).map((account) => account.id), [id2]);
   } finally {
     await cleanup();
   }
@@ -210,6 +223,51 @@ test("config whitelist read and write persists correctly", async () => {
     assert.equal(status.disableThreshold, 8);
     assert.equal(status.probeIntervalMs, 120000);
     assert.equal(status.unsupportedKey, undefined);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("primary-backup scheduling tries each account once when the primary is cooling", async () => {
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await manager.addOrUpdateAccount({ email: "primary@example.com", refresh: "r1" });
+    await manager.addOrUpdateAccount({ email: "backup@example.com", refresh: "r2" });
+    const [primary, backup] = manager.allAccounts;
+    await manager.updateConfig({ schedulingMode: "primary-backup" });
+    await manager.markCooldown(primary.id, 60000, "rate limited");
+
+    assert.deepEqual((await manager.getCandidateAccounts()).map((account) => account.id), [backup.id, primary.id]);
+    await manager.clearCooldown(primary.id);
+    assert.deepEqual((await manager.getCandidateAccounts()).map((account) => account.id), [primary.id, backup.id]);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("auto scheduling uses live quota buckets and legacy limits for the requested category", async () => {
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await manager.addOrUpdateAccount({ email: "weekly-empty@example.com", refresh: "r1" });
+    await manager.addOrUpdateAccount({ email: "healthy@example.com", refresh: "r2" });
+    const [empty, healthy] = manager.allAccounts;
+    const group = (name, weekly, fiveHour) => ({
+      name,
+      limits: [
+        { label: "Weekly", remainingFraction: weekly },
+        { label: "5-hour", remainingFraction: fiveHour },
+      ],
+    });
+    await manager.updateAccountQuota(empty.id, {
+      groups: [group("Gemini", 0, 1), group("Claude & GPT", 1, 1)]
+        .map(({ name, limits }) => ({ displayName: name, buckets: limits })),
+    });
+    await manager.updateAccountQuota(healthy.id, {
+      groups: [group("Gemini", 0.5, 0.5), group("Claude & GPT", 0.5, 0)],
+    });
+
+    assert.deepEqual((await manager.getCandidateAccounts("gemini")).map((account) => account.id), [healthy.id, empty.id]);
+    assert.deepEqual((await manager.getCandidateAccounts("claude")).map((account) => account.id), [empty.id, healthy.id]);
   } finally {
     await cleanup();
   }

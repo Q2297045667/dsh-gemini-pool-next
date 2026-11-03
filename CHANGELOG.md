@@ -2,6 +2,37 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## Unreleased — 2026-11-04
+
+### Fixed
+- 账号池首次初始化合并并发加载，额度刷新统一串行落盘，避免账号丢失与临时文件重命名冲突；自动调度识别真实额度结构并按所有窗口的最小余量排序，主备候选不重复，手动模式严格锁定所选账号
+- 模型目录合并整个账号池，保留用户明确保存的空选择和下架元数据；首次发现只启用可用模型，Claude 4.6 不再误匹配 5.5；文本、生图与视觉调用跳过已知不支持目标模型的账号
+- 三条生成路径共享 SSE 解析与 reader 清理，兼容分块 UTF-8、无空格 `data:` 和无末尾换行的帧；结构化限流错误正确触发冷却与切号，生图返回后取消剩余流；历史图片超限时完整省略旧图并保留最新图片
+- 视觉桥路由与日志异常保持透传；本地图片和生图输出校验真实路径并拒绝符号链接越界，URL 地址检查覆盖 IPv4-mapped IPv6；生图按返回 MIME 保存正确扩展名，URL 与 inline 图的重看提示不再承诺无效附件哈希
+- 设置页不再把普通看图模型标为生图模型，保存失败不再显示成功；额度命令兼容真实 `displayName/buckets/window` 结构，冷却错误在日志、存储和状态输出中脱敏；Web API 对非法 JSON 和超大请求体分别返回 400 / 413
+- OAuth 登录复用 token 交换逻辑，支持等待回调时取消，并发网页登录共享回调服务器，拒绝缺少有效 token 的成功响应，缺少浏览器启动器时不再崩溃；后台探活逐轮调度并随插件卸载清理
+
+### 验证
+- `npm run check` 与带覆盖率的全量测试均为 196/196；语法检查覆盖全部发布模块，新增回归包括 OAuth 本地回调、真实临时存储、模型级账号选择、Web API、CLI 及插件装卸生命周期
+- npm 包清单核对、解包导入和隔离 harness home 下的 CLI 冒烟检查通过；没有升级依赖或更改版本号
+- 使用模拟 Google 响应与临时凭证验证，未进行真实 Google 登录、线上模型调用或完整 DSH GUI 端到端验证；URL DNS 预检查与宿主 fetch 独立解析，不承诺防止 DNS 重绑定
+
+## v0.9.0 — 2026-11-03
+
+### Added
+- **模型可用性如实反映账号实际持有实体（Refs #16）**：改版后 4 Argon 为 Pro 专属、Claude 5.5 为 Pro 非试用专属。目录合并不再给「后端 `available=` 里没有对应实体」的模型塞回退额度——缺失实体标记为不可用（设置页显示「账号不可用」徽标、无额度），首次登录也只启用账号真实通告的模型
+- **接入改版后 Antigravity 的 Pro 会员新模型**：模型目录对齐官方 Choose a model 页（[antigravity.google/docs/models](https://antigravity.google/docs/models/)）。新增 **Gemini 4 Argon**（Pro 旗舰，后端实体 `gemini-4-argon-high`，思考等级 High、上下文 1M、输出 65536）、**Claude Opus 5.5** 与 **Claude Sonnet 5.5**（Pro 非试用，后端实体 `claude-opus-5-5-high` / `claude-sonnet-5-5-high`）；Gemini 3.8 Flash 保留（新版目录中全档位可用）。ROUTING / 运行时输出上限 / 动态匹配 / 设置页可用性探针（`publicModelMatchNeedles`）全部按后端实际通告的实体名更新
+- 设置页模型选择器新增「⚠️ 将下架」徽标：Claude Opus/Sonnet 4.6 将于 2026-11-18 被 Antigravity 移除，条目保留但标记 deprecated 与下架日期
+
+### Changed
+- **迁移到最新改版的 DSH（0.2.x）**：`engines.dsh` 收紧为 `>=0.2.0 <0.3.0`，devDeps 对齐 0.2.2-alpha.3（cordis ~4.0.6-alpha.2、schemastery ^3.18.5）。移除对旧 `offloadRequestImagesWithPolicy` 的运行时探测（0.2.x 已删除该 API），改为插件自有的图片历史预算投影（行为等价、跨版本一致）；视觉桥存活探针适配 cordis ≥ 4.0.6 的 bus 布局（最后一个监听器注销后 hook 键被移除，可读总线上的缺失键判定为「无桥」而非不可读）
+- **Gemini 3.8 / 3.7 Flash 路由实体修正（Refs #15、#16）**：免费 project 不存在 rollout 期的 `*-tiered` 实体，3.8 / 3.7 Flash 现按思考等级路由到后端真实通告的 `-low` / `-medium` / `-high` 实体，并随请求发送对应 `thinkingConfig.thinkingLevel`；设置页 3.8 的可用性探针不再误匹配 3.7 行（#16）
+- Claude Sonnet 4.6 运行时实体改为后端实际通告的裸 `claude-sonnet-4-6`（此前指向不存在的 `-thinking` 实体）
+- 代看模型自动挑选优先 Flash 线（避免默认启用旗舰后每张图都烧 Pro 额度），空配置兜底改为 `gemini-3.8-flash`（全档位可用）；探活请求同样固定以 3.8 Flash 为兜底，不再默认打 Pro 专属的旗舰实体
+
+### 验证
+- `npm run check` 114/114（v0.8.2 基线 104 项全保留 + 新增 `test/models.test.mjs` 6 项：新版目录四模型存在性、新实体路由解析、token 上限、实体/标签匹配、级别后缀剥离、排序与 deprecated 标记；新增 `test/catalog-availability.test.mjs` 4 项：实体存在才标可用并继承额度（Refs #16）、缺失实体标不可用、sonnet 4.6 裸实体匹配、内部实体过滤；vision-tool 两项断言随 3.7 路由实体与兜底模型更新）
+
 ## v0.8.2 — 2026-10-05
 
 ### Fixed

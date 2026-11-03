@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 
 import { registerCommands } from "../lib/commands.js";
 
@@ -121,6 +122,17 @@ test("quota handler refreshes every account, emits adapter update, lists account
   assert.ok(result.text.includes("gemini 5h=47% week=90%"));
   assert.ok(result.text.includes("two@gmail.com"));
   assert.ok(result.text.includes("quota=unknown"));
+});
+
+test("quota handler renders real parsed quota groups and buckets", async () => {
+  const status = JSON.parse(await readFile(new URL("./fixtures/status-value.json", import.meta.url), "utf8"));
+  const { registered, commands } = makeRegistry();
+  const deps = makeDeps();
+  deps.poolManager.getStatus = async () => status;
+  registerCommands({ commands }, deps);
+  const result = await registered.find((d) => d.name === "antigravity-quota").handler({});
+  assert.equal(result.kind, "success");
+  assert.ok(result.text.includes("gemini 5h=100% week=67%"));
 });
 
 test("empty pool: quota handler answers with guidance instead of a bare zero", async () => {

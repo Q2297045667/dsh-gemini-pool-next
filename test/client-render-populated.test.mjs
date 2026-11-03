@@ -109,8 +109,16 @@ function createReactRuntime() {
       };
       return [inst.hooks[idx], set];
     },
-    useMemo(factory) { return factory(); },
-    useCallback(fn) { return fn; },
+    useMemo(factory, deps) {
+      const inst = current;
+      const idx = inst.hookIndex++;
+      const prev = inst.hooks[idx];
+      if (!prev || !deps || deps.some((dep, i) => !Object.is(dep, prev.deps?.[i]))) {
+        inst.hooks[idx] = { deps, value: factory() };
+      }
+      return inst.hooks[idx].value;
+    },
+    useCallback(fn, deps) { return React.useMemo(() => fn, deps); },
     useRef(initial) {
       const inst = current;
       const idx = inst.hookIndex++;
@@ -130,7 +138,7 @@ function createReactRuntime() {
     },
     Fragment: Symbol("Fragment"),
   };
-  return { React, instances, pendingEffects, get current() { return current; }, set current(v) { current = v; } };
+  return { React, instances, pendingEffects, nodes: [], get current() { return current; }, set current(v) { current = v; } };
 }
 
 function renderTree(node, rt, depth = 0) {
@@ -159,13 +167,14 @@ function renderTree(node, rt, depth = 0) {
       }
       return renderTree(out, rt, depth + 1);
     }
+    rt.nodes.push(node);
     return children.map((c) => renderTree(c, rt, depth + 1)).join("");
   }
   return "";
 }
 
 /** Load client.js, apply() it, and return a mount() helper that runs effects + re-renders. */
-function loadClient({ statusPayload, quotaPayload, requests }) {
+function loadClient({ statusPayload, quotaPayload, requests, requestHandler }) {
   const source = loadGeminiSource();
   const rt = createReactRuntime();
   const { document } = makeDomStub();
@@ -173,6 +182,8 @@ function loadClient({ statusPayload, quotaPayload, requests }) {
   const fetchStub = async (url, options = {}) => {
     const method = (options.method || "GET").toUpperCase();
     requests.push(`${method} ${url}`);
+    const custom = requestHandler?.(url, options);
+    if (custom) return custom;
     const isStatus = String(url).endsWith("/status");
     const isQuota = String(url).endsWith("/quota");
     let payload;
@@ -223,6 +234,7 @@ function loadClient({ statusPayload, quotaPayload, requests }) {
     let text = "";
     for (let pass = 0; pass < 8; pass++) {
       rt.pendingEffects.length = 0;
+      rt.nodes.length = 0;
       text = renderTree(sectionRender({}), rt);
       const effects = rt.pendingEffects.splice(0);
       for (const { fn } of effects) {
@@ -288,6 +300,51 @@ test("model list renders and marks enabled models", async () => {
   const options = STATUS_FIXTURE.models.options;
   assert.ok(options.length > 0, "fixture must list models");
   assert.match(text, /gemini-3\.8-flash/, "model ids must render in the model list");
+});
+
+test("image generation choices and badges exclude models that only read images", async () => {
+  const fixture = structuredClone(STATUS_FIXTURE);
+  fixture.models.options = [
+    { id: "gemini-3.8-flash", name: "Gemini Flash", inputModalities: ["text", "image"] },
+    { id: "claude-sonnet-5.5", name: "Claude Sonnet", inputModalities: ["text", "image"] },
+    { id: "gemini-3.1-flash-image", name: "Flash Image", inputModalities: ["text", "image"] },
+  ];
+  const { mount, rt } = loadClient({ statusPayload: fixture, quotaPayload: fixture, requests: [] });
+  await mount();
+  const select = rt.nodes.find((node) => node.props.id === "dsha-cfg-image-model");
+  assert.deepEqual(select.children.map((node) => node.props.value), ["gemini-3.1-flash-image"]);
+  assert.equal(rt.nodes.filter((node) => node.props.className === "dsha-badge-image").length, 1);
+  const vision = rt.nodes.find((node) => node.props.id === "dsha-cfg-vision-model");
+  assert.ok(vision.children.some((node) => node.props.value === "gemini-3.8-flash"));
+});
+
+test("failed cooldown saves show the error without a success message", async () => {
+  const { mount, rt } = loadClient({ statusPayload: STATUS_FIXTURE, quotaPayload: STATUS_FIXTURE, requests: [] });
+  await mount();
+  rt.nodes.find((node) => node.props.className === "dsha-collapse-toggle").props.onClick();
+  await mount();
+  await rt.nodes.find((node) => node.type === "button" && node.children.includes("保存冷却设置")).props.onClick();
+  const text = await mount();
+  assert.match(text, /not-stubbed/);
+  assert.doesNotMatch(text, /设置已保存/);
+});
+
+test("successful cooldown saves show a confirmation", async () => {
+  const requests = [];
+  const { mount, rt } = loadClient({
+    statusPayload: STATUS_FIXTURE, quotaPayload: STATUS_FIXTURE, requests,
+    requestHandler(url) {
+      if (!String(url).endsWith("/config")) return;
+      return { ok: true, status: 200, json: async () => ({ ok: true, value: STATUS_FIXTURE }) };
+    },
+  });
+  await mount();
+  rt.nodes.find((node) => node.props.className === "dsha-collapse-toggle").props.onClick();
+  await mount();
+  await rt.nodes.find((node) => node.type === "button" && node.children.includes("保存冷却设置")).props.onClick();
+  const text = await mount();
+  assert.ok(requests.includes("POST /antigravity/api/config"));
+  assert.match(text, /设置已保存/);
 });
 
 test("no real email leaks from the committed fixture", () => {

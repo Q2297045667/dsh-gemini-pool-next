@@ -88,7 +88,7 @@ The relay has one real advantage: **bans hit the operator's accounts, yours stay
 
 ## 🚀 Quick Start
 
-**Requirements**: DSH 0.2.0-rc.2, the version this release is tested against (`dsh --version` to check yours).
+**Requirements**: DSH `>=0.2.0 <0.3.0` (verified against 0.2.2-alpha, matching the revamped Antigravity model catalog). Run `dsh --version` to check yours.
 
 **1. Install the plugin**
 
@@ -191,7 +191,7 @@ When the main model cannot see images (e.g. a text-only model), a Gemini model f
 
 - **Data flow**: images are processed through Google accounts in the pool, sharing quota with chat and image generation.
 - **On by default**. To turn it off (any one of these): set the environment variable `ANTIGRAVITY_VISION_ENABLED=false`; or toggle it off in the Settings · Vision Bypass card; or set `visionEnabled: false` in accounts.json via `/antigravity/api/config`. The switch governs both image admission and automatic description; with it off, pasting behaves exactly as the host does out of the box. `visionModel` picks the describing model — leave it empty for automatic selection, or pick one in the Settings card.
-- **Known dependency**: automatic description relies on the host's `llm/stream` event and image admission on `resolveModelInfo`. If pasting images misbehaves after a major host upgrade, revisit this section (verified against DSH 0.2.0-rc.2).
+- **Known dependency**: automatic description relies on the host's `agent/pre-step` event and image admission on `resolveModelInfo`. If pasting images misbehaves after a major host upgrade, revisit this section (verified against DSH 0.2.2-alpha).
 - **Troubleshooting**: if the model still receives a placeholder after pasting an image, run `/antigravity-doctor` and check the `visionBridge` / `visionShim` lines (`registered` + `installed` is the healthy state). Server log lines prefixed `[Antigravity Pool Vision]` record every bridge decision (request entry, model gate, rewrite result or passthrough reason); zero prefixed lines after a paste means the event never reached the bridge.
 
 ## 🤖 Models
@@ -205,10 +205,12 @@ Tick a model in Settings to enable it. Enabled models float to the top, each sho
 
 | Model | Quota pool |
 |---|---|
+| **Gemini 4 Argon** (Pro flagship) | Gemini |
 | Gemini 3.8 / 3.7 / 3.6 / 3.5 Flash | Gemini |
 | Gemini 3.1 Pro · Gemini 3.1 Flash Image (image gen) | Gemini |
 | Gemini 3 Flash · Gemini 2.5 Pro / Flash | Gemini |
-| Claude Opus 4.6 · Claude Sonnet 4.6 · GPT-OSS 120B | Claude & GPT |
+| **Claude Opus 5.5** · **Claude Sonnet 5.5** (Pro) | Claude & GPT |
+| Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️ (removed by Antigravity on 2026-11-18) · GPT-OSS 120B | Claude & GPT |
 
 Models in the same pool share the weekly and 5-hour quotas. Quota drains in proportion to token cost, so heavier models run out faster.
 

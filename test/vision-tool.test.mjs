@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
@@ -174,6 +174,28 @@ test("resolveImageInput refuses local paths escaping the workspace (arbitrary fi
     () => resolveImageInput(join("test", "..", "..", "..", "secret.png"), { attachmentsRoot: "unused" }),
     /inside the workspace/i,
   );
+});
+
+test("resolveImageInput refuses workspace symlinks to files outside allowed roots", async (t) => {
+  const outside = await mkdtemp(join(tmpdir(), "vision-symlink-outside-"));
+  const inside = await mkdtemp(join(process.cwd(), "test", "vision-symlink-"));
+  t.after(() => Promise.all([rm(outside, { recursive: true, force: true }), rm(inside, { recursive: true, force: true })]));
+  const secret = join(outside, "secret.png");
+  await writeFile(secret, PNG_MAGIC);
+  const link = join(inside, "picture.png");
+  await symlink(secret, link);
+  await assert.rejects(() => resolveImageInput(link), /inside the workspace/i);
+});
+
+test("resolveImageInput refuses attachment objects symlinked outside the store", async (t) => {
+  const { root, bucket, cleanup } = await makeAttachmentsRoot();
+  const outside = await mkdtemp(join(tmpdir(), "vision-object-outside-"));
+  t.after(() => Promise.all([cleanup(), rm(outside, { recursive: true, force: true })]));
+  const secret = join(outside, "secret.png");
+  await writeFile(secret, PNG_MAGIC);
+  await rm(join(bucket, HASH_FULL));
+  await symlink(secret, join(bucket, HASH_FULL));
+  await assert.rejects(() => resolveImageInput(HASH_PREFIX, { attachmentsRoot: root }), /attachments store/i);
 });
 
 test("resolveImageInput refuses non-public http(s) URL targets (SSRF guard)", async () => {
@@ -364,7 +386,7 @@ test("requestVisionThroughPool retries the fallback runtime model on retryable s
       const body = JSON.parse(String(init?.body || "{}"));
       seenModels.push(body.model);
       // The primary runtime candidate keeps failing; the fallback must step in.
-      if (body.model === "gemini-3.7-flash-tiered") {
+      if (body.model === "gemini-3.7-flash-low") {
         return new Response("not found", { status: 404 });
       }
       return sseResponse(SSE(textChunk("Fallback runtime worked.")));
@@ -420,7 +442,8 @@ test("resolveVisionModelId prefers visionModel, then a non-image-gen gemini, the
   await manager.updateConfig({ visionModel: "gemini-3.1-flash-image" });
   assert.equal(resolveVisionModelId(manager, settings), "gemini-2.5-pro");
 
-  // Nothing matches -> documented fallback.
+  // Nothing matches -> documented fallback (the everyday model of the
+  // revamped catalog, available on every plan tier).
   const textOnly = { catalogModels: [{ id: "gpt-oss-120b", inputModalities: ["text"] }], enabledModelIds: ["gpt-oss-120b"] };
-  assert.equal(resolveVisionModelId(manager, textOnly), "gemini-3.6-flash");
+  assert.equal(resolveVisionModelId(manager, textOnly), "gemini-3.8-flash");
 });

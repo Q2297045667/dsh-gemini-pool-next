@@ -79,6 +79,48 @@ test("a corrupt pool file throws instead of being silently discarded", async () 
     await assert.rejects(() => m.init(), /corrupt|cannot be parsed/i);
     // The corrupt file must be left untouched (not overwritten by migration).
     assert.equal(await readFile(file, "utf8"), "{ this is not valid json ");
+    // A failed shared initialization must be retryable after the user repairs it.
+    await writeFile(file, JSON.stringify({ accounts: [{ id: "repaired", refresh: "refresh" }] }));
+    await m.init();
+    assert.equal(m.allAccounts[0].id, "repaired");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("concurrent first-use mutations preserve every account in an existing pool", async () => {
+  const { file, legacy, cleanup } = await tempPaths();
+  try {
+    await writeFile(file, JSON.stringify({
+      accounts: [{ id: "seed", email: "seed@example.com", refresh: "seed-refresh" }],
+    }));
+    const pool = new AccountPoolManager(file, legacy);
+    const emails = Array.from({ length: 12 }, (_, index) => `new-${index}@example.com`);
+    await Promise.all(emails.map((email) => pool.addOrUpdateAccount({ email, refresh: "refresh" })));
+
+    const reloaded = new AccountPoolManager(file, legacy);
+    const savedEmails = (await reloaded.getStatus()).accounts.map((account) => account.email).sort();
+    assert.deepEqual(savedEmails, ["seed@example.com", ...emails].sort());
+  } finally {
+    await cleanup();
+  }
+});
+
+test("concurrent quota updates and config writes complete and persist together", async () => {
+  const { file, legacy, cleanup } = await tempPaths();
+  try {
+    const pool = new AccountPoolManager(file, legacy);
+    await pool.addOrUpdateAccount({ email: "quota@example.com", refresh: "refresh" });
+    const id = pool.allAccounts[0].id;
+    await Promise.all([
+      ...Array.from({ length: 8 }, (_, index) => pool.updateAccountQuota(id, { fetchedAt: index })),
+      pool.updateConfig({ visionModel: "gemini-3.8-flash" }),
+    ]);
+
+    const reloaded = new AccountPoolManager(file, legacy);
+    await reloaded.init();
+    assert.equal(reloaded.allAccounts[0].quota.fetchedAt, 7);
+    assert.equal(reloaded.visionModel, "gemini-3.8-flash");
   } finally {
     await cleanup();
   }

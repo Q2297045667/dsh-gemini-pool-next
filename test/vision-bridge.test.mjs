@@ -144,6 +144,8 @@ test("text-only model: image blocks replaced in a NEW decision, extras preserved
   assert.equal(second.content[0].type, "text");
   assert.ok(second.content[0].text.includes("A red square on white background."));
   assert.ok(second.content[0].text.includes(`sha256:${sha256Hex(Buffer.from("ABC"))}`));
+  assert.ok(second.content[0].text.includes("not a stored attachment"));
+  assert.ok(!second.content[0].text.includes("call antigravity_read_image with the 8-char hash prefix"));
 
   assert.deepEqual(resolveCalls, [ATTACHMENT_ID]);
   assert.equal(describeCalls.length, 2);
@@ -151,6 +153,18 @@ test("text-only model: image blocks replaced in a NEW decision, extras preserved
   // The original deep-frozen input was never mutated.
   assert.equal(messages[0].content[1].type, "image");
   assert.equal(messages[1].content[0].type, "image");
+});
+
+test("remote image descriptions use the URL for follow-up reads and cache repeat occurrences", async () => {
+  const { bridge, describeCalls, resolveCalls } = makeDeps();
+  const url = "https://images.example.test/picture.png";
+  const decision = enterDecision([{ role: "user", content: [{ type: "image", data: url }] }]);
+  const { result } = await runPreStep(bridge, decision);
+  await runPreStep(bridge, decision);
+  assert.equal(describeCalls.length, 1);
+  assert.deepEqual(resolveCalls, [url]);
+  assert.ok(result.messages[0].content[0].text.includes(`original image URL: ${url}`));
+  assert.ok(result.messages[0].content[0].text.includes("with this URL to look again"));
 });
 
 test("vision-capable model -> decision returned untouched", async () => {
@@ -175,6 +189,29 @@ test("isTextOnlyModel throwing -> conservative passthrough", async () => {
   const { result } = await runPreStep(bridge, decision);
   assert.equal(result, decision);
   assert.equal(deps.describeCalls.length, 0);
+});
+
+test("route resolution failure preserves the original decision", async () => {
+  const deps = makeDeps();
+  deps.resolveRoute = () => { throw new Error("route unavailable"); };
+  const bridge = createVisionBridge(deps);
+  const decision = enterDecision([
+    { role: "user", content: [{ type: "image", attachment: { attachmentId: ATTACHMENT_ID } }] },
+  ]);
+  const { result } = await runPreStep(bridge, decision);
+  assert.equal(result, decision);
+  assert.equal(deps.describeCalls.length, 0);
+});
+
+test("diagnostic logger failures cannot interrupt a vision step", async () => {
+  const deps = makeDeps();
+  deps.log = () => { throw new Error("logger unavailable"); };
+  const bridge = createVisionBridge(deps);
+  const decision = enterDecision([
+    { role: "user", content: [{ type: "image", attachment: { attachmentId: ATTACHMENT_ID } }] },
+  ]);
+  const { result } = await runPreStep(bridge, decision);
+  assert.equal(result, decision);
 });
 
 test("same attachment id across steps describes only once (cache)", async () => {
@@ -413,7 +450,9 @@ test("liveness: probe sees the tagged handler through host-style proxying and de
 test("liveness: unreadable bus layout reports undefined instead of a false alarm", () => {
   assert.equal(isVisionBridgeHookLive(undefined), undefined);
   assert.equal(isVisionBridgeHookLive({}), undefined);
-  assert.equal(isVisionBridgeHookLive({ _hooks: {} }), undefined);
+  // Cordis >= 4.0.6 keeps a readable hook table; an absent key on a readable
+  // table is a truthful "no bridge", not a false alarm.
+  assert.equal(isVisionBridgeHookLive({ _hooks: {} }), false);
 });
 
 test("liveness: real cordis registration is visible and disposal flips it", () => {
