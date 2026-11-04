@@ -104,6 +104,73 @@ test("no whitespace-only text part ever reaches the wire", async (t) => {
   assert.ok(contents.some((entry) => entry.parts.some((part) => part.text === "real question")));
 });
 
+test("a role:tool result answers the call in the very next turn", async (t) => {
+  // This is how DSH delivers tool results; sending them as plain user text made
+  // Claude answer 400 "tool_use ids were found without tool_result blocks
+  // immediately after".
+  const { requests } = await runRequest(t, {
+    modelId: "claude-sonnet-5.5",
+    messages: [
+      { role: "user", content: [{ type: "text", text: "list the repo" }] },
+      { role: "assistant", content: [{ type: "reasoning", text: "thinking" }, { type: "tool-call", id: "call_00_abc", name: "run_code", arguments: "{}" }] },
+      { role: "tool", toolCallId: "call_00_abc", content: [{ type: "text", text: "a\nb" }], isError: false },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+      { role: "user", content: [{ type: "text", text: "thanks" }] },
+    ],
+  });
+  const contents = requests[0].request.contents;
+  const callIndex = contents.findIndex((entry) => entry.parts.some((part) => part.functionCall));
+  assert.ok(callIndex >= 0);
+  const next = contents[callIndex + 1];
+  assert.equal(next.role, "user");
+  assert.ok(next.parts.some((part) => part.functionResponse), "the very next turn must carry the tool result");
+  assert.deepEqual(next.parts.find((part) => part.functionResponse).functionResponse, {
+    name: "run_code",
+    response: { output: "a\nb" },
+    id: "call_00_abc",
+  });
+});
+
+test("a history ending on an unanswered tool call still sends a valid pairing", async (t) => {
+  const { requests } = await runRequest(t, {
+    modelId: "claude-opus-5.5",
+    messages: [
+      { role: "user", content: [{ type: "text", text: "run it" }] },
+      { role: "assistant", content: [{ type: "tool-call", id: "call_00_pending", name: "run_code", arguments: "{}" }] },
+    ],
+  });
+  const contents = requests[0].request.contents;
+  assert.equal(contents.length, 3);
+  const tail = contents[2];
+  assert.equal(tail.role, "user");
+  assert.equal(tail.parts[0].functionResponse.name, "run_code");
+  assert.equal(tail.parts[0].functionResponse.id, "call_00_pending");
+});
+
+test("every functionCall in a mixed history is answered by the next turn", async (t) => {
+  const { requests } = await runRequest(t, {
+    modelId: "claude-sonnet-5.5",
+    messages: [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+      { role: "assistant", content: [{ type: "tool-call", id: "a1", name: "first", arguments: "{}" }] },
+      { role: "tool", toolCallId: "a1", content: [{ type: "text", text: "r1" }] },
+      { role: "system", content: [{ type: "text", text: "model changed" }] },
+      { role: "assistant", content: [{ type: "tool-call", id: "a2", name: "second", arguments: "{}" }] },
+      { role: "tool", toolCallId: "a2", content: [{ type: "text", text: "r2" }] },
+      { role: "assistant", content: [{ type: "tool-call", id: "a3", name: "third", arguments: "{}" }] },
+      { role: "tool", toolCallId: "a3", content: [{ type: "text", text: "r3" }] },
+      { role: "user", content: [{ type: "text", text: "done?" }] },
+    ],
+  });
+  const contents = requests[0].request.contents;
+  for (let i = 0; i < contents.length; i++) {
+    const calls = contents[i].parts.filter((part) => part.functionCall).map((part) => part.functionCall.id);
+    if (calls.length === 0) continue;
+    const nextIds = (contents[i + 1]?.parts ?? []).filter((part) => part.functionResponse).map((part) => part.functionResponse.id);
+    assert.deepEqual(calls.filter((id) => !nextIds.includes(id)), [], "unanswered call in turn " + i);
+  }
+});
+
 test("a tool that printed only whitespace sends a non-empty result", async (t) => {
   // Real sessions contain tool results whose text is a single space; forwarding
   // that verbatim made Claude answer 400 "messages: text content blocks must
