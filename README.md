@@ -210,21 +210,23 @@ HTTPS_PROXY=http://127.0.0.1:7897
   <img src="./assets/images/screenshots/settings-3.png" alt="默认生图配置" width="45%">
 </p>
 
-| 模型 | 额度池 |
-|---|---|
-| **Gemini 4 Argon**（Pro 会员旗舰） | Gemini |
-| Gemini 3.8 / 3.7 / 3.6 / 3.5 Flash | Gemini |
-| Gemini 3.1 Pro · Gemini 3.1 Flash Image（生图） | Gemini |
-| Gemini 3 Flash · Gemini 2.5 Pro / Flash | Gemini |
-| Gemini 3.5 / 3.1 / 2.5 Flash Lite | Gemini |
-| **Claude Opus 5.5** · **Claude Sonnet 5.5**（Pro 会员） | Claude & GPT |
-| Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️（2026-11-18 起下架） · GPT-OSS 120B | Claude & GPT |
+| 模型 | 思考等级 | 额度池 |
+|---|---|---|
+| **Gemini 4 Argon**（Pro 会员旗舰） | Low / Medium / High | Gemini |
+| Gemini 3.8 Flash | Minimal / Low / Medium / High | Gemini |
+| Gemini 3.5 Flash Lite · Gemini 3.1 Flash Lite · Gemini 2.5 Flash Lite | — | Gemini |
+| Gemini 3.1 Flash Image（生图） | — | Gemini |
+| Gemini 3 Flash · Gemini 2.5 Pro / Flash | — | Gemini |
+| **Claude Opus 5.5** · **Claude Sonnet 5.5**（Pro 会员） | Low / Medium / High | Claude & GPT |
+| Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️（2026-11-18 起下架） · GPT-OSS 120B | — | Claude & GPT |
 
 同一额度池内共享每周与 5 小时额度；额度按 token 成本比例消耗，越重的模型消耗越快。
 
-**可用的模型与思考等级都以账号实际通告的后端实体为准。** 插件登录后拉取该账号的 `fetchAvailableModels`，只启用后端真正通告的实体：账号没有的模型（例如不发旗舰实体的项目上的 Gemini 4 Argon，或已被后端起走的 3.7 / 3.6 Flash）在设置页显示「账号不可用」且不会被勾选。若已保存的会话仍指向这类模型，请求会自动降级到池内最合适的可用模型，而不是把请求发到一个后端从未通告的实体上——后者正是 `Requested entity was not found`（404）的来源。
+**目录由后端按客户端指纹（User-Agent）决定通告范围。** 同一个 Pro 账号实测：旧指纹 `antigravity/1.15.8 linux/amd64` 只返回 16 个实体，**没有 Gemini 4 Argon、也没有分级的 3.8**；改用当前指纹 `antigravity/hub/2.24.0 (aidev_client; os_type=…; arch=…; cl=1000335682)` 后返回 22 个实体，含 `gemini-4-argon-low/medium/high` 与 `gemini-3.8-flash-low/medium/high`。插件默认携带当前指纹（`ANTIGRAVITY_USER_AGENT` 可覆盖），并在指纹随升级变化时于启动自动重新发现目录。
 
-思考等级同样来自真实实体：Claude 5.5 提供 Low / Medium / High 三档（分别对应 `claude-*-5-5-low/medium/high`），Gemini Flash 系列提供 Minimal / Low / Medium / High（tiered 实体经 `thinkingConfig.thinkingLevel` 下发；后端拒绝某个等级时自动降一档重试，而不是整条请求失败）。
+**可用的模型与思考等级都以账号实际通告的实体为准。** 插件登录后拉取该账号的 `fetchAvailableModels`，只启用后端真正通告的实体：账号没有的模型在设置页显示「账号不可用」且不会被勾选。若已保存的会话仍指向这类模型，请求会自动降级到池内最合适的可用模型，而不是把请求发到一个后端从未通告的实体上——后者正是 `Requested entity was not found`（404）的来源。
+
+思考等级同样来自真实实体：Gemini 4 Argon 与 Claude 5.5 都是「一档一个实体」（`gemini-4-argon-low/medium/high`、`claude-*-5-5-low/medium/high`），因此选级就是在选实体 id，不再额外附带思考参数；Gemini 3.8 Flash 另有 rollout 期的 tiered 实体，仅当账号只通告它时才经 `thinkingConfig.thinkingLevel` 表达等级，被后端拒绝时自动降一档重试而不是整条请求失败。
 
 ## 🧭 架构
 

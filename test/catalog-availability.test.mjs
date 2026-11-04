@@ -45,7 +45,8 @@ test("a base model without any matching entity is unavailable (Refs #16)", () =>
   assert.equal(byId.get("gemini-4-argon").remainingFraction, undefined);
   assert.equal(byId.get("claude-opus-5.5").available, false);
   assert.equal(byId.get("claude-sonnet-5.5").available, false);
-  assert.equal(byId.get("gemini-3.7-flash").available, false);
+  // Generations the backend never advertised are not catalogued at all.
+  assert.equal(byId.get("gemini-3.7-flash"), undefined);
   assert.equal(byId.get("gemini-3.8-flash").available, true);
   assert.equal(byId.get("gpt-oss-120b").available, true);
 });

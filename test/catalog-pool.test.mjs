@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { AccountPoolManager } from "../lib/pool.js";
 import {
   FileModelSettingsStore,
+  catalogClientFingerprint,
   fetchQuotaForAccount,
   getBestCatalogQuota,
   parseCatalogModels,
@@ -140,6 +141,16 @@ test("first quota discovery preserves a model selection saved before discovery",
   await settings.setEnabledModelIds([]);
   await fetchQuotaForAccount(account, pool, settings);
   assert.deepEqual((await settings.read()).enabledModelIds, []);
+});
+
+test("a refresh stamps the catalog with the client fingerprint it was discovered under", async (t) => {
+  const { pool, settings, addAccount } = await setup(t);
+  const account = await addAccount("free");
+  stubCatalogFetch(t, { free: { "gemini-3.8-flash-low": {} } });
+  await fetchQuotaForAccount(account, pool, settings);
+  const stored = await settings.read();
+  assert.equal(stored.catalogClient, catalogClientFingerprint());
+  assert.match(stored.catalogClient, /^\d+\.\d+\.\d+\/\d+$/);
 });
 
 test("a refresh prunes models no account in the pool serves", async (t) => {

@@ -374,7 +374,7 @@ test("requestVisionThroughPool retries the fallback runtime model on retryable s
   const { manager, cleanup } = await createTempManager();
   t.after(cleanup);
   await addAccount(manager, "fallback@example.com");
-  await manager.updateConfig({ visionModel: "gemini-3.7-flash" });
+  await manager.updateConfig({ visionModel: "gemini-3.8-flash" });
 
   const seenModels = [];
   await withStubbedFetch(
@@ -386,7 +386,7 @@ test("requestVisionThroughPool retries the fallback runtime model on retryable s
       const body = JSON.parse(String(init?.body || "{}"));
       seenModels.push(body.model);
       // The primary runtime candidate keeps failing; the fallback must step in.
-      if (body.model === "gemini-3.7-flash-low") {
+      if (body.model === "gemini-3.8-flash-low") {
         return new Response("not found", { status: 404 });
       }
       return sseResponse(SSE(textChunk("Fallback runtime worked.")));

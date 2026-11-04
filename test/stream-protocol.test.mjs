@@ -6,7 +6,7 @@ import { modelById } from "../lib/models.js";
 const tokenInfo = { token: "protocol-test", projectId: "test-project" };
 const textFrame = (text) => ({ response: { candidates: [{ content: { parts: [{ text }] } }] } });
 
-/** The entities a paid (Google AI Pro) project advertises today. */
+/** The entities a paid (Google AI Pro) project advertises with a current fingerprint. */
 const LIVE_ENTITIES = {
   "claude-opus-5-5-high": {},
   "claude-opus-5-5-low": {},
@@ -18,7 +18,13 @@ const LIVE_ENTITIES = {
   "gemini-2.5-pro": {},
   "gemini-3-flash": {},
   "gemini-3.1-flash-image": {},
+  "gemini-3.8-flash-high": {},
+  "gemini-3.8-flash-low": {},
+  "gemini-3.8-flash-medium": {},
   "gemini-3.8-flash-tiered": {},
+  "gemini-4-argon-high": {},
+  "gemini-4-argon-low": {},
+  "gemini-4-argon-medium": {},
   "gpt-oss-120b-medium": {},
 };
 
@@ -104,10 +110,10 @@ test("tool requests preserve schema and replay signatures while clamping output 
     ],
   });
   const { request, model } = requests[0];
-  // The live catalog advertises the tiered entity, so the requested level
-  // travels in thinkingConfig instead of a per-level model id.
-  assert.equal(model, "gemini-3.8-flash-tiered");
-  assert.equal(request.generationConfig.thinkingConfig.thinkingLevel, "MEDIUM");
+  // The live catalog advertises one entity per level, so the level is pinned by
+  // the model id and no thinkingConfig has to be sent.
+  assert.equal(model, "gemini-3.8-flash-medium");
+  assert.equal(request.generationConfig.thinkingConfig, undefined);
   assert.equal(request.generationConfig.maxOutputTokens, 65536);
   assert.equal(request.contents[1].parts[0].thought_signature, "signed");
   assert.equal(request.contents[2].parts[0].functionResponse.name, "inspect");
@@ -153,6 +159,6 @@ test("liveness probe uses a text model when only image generation is enabled", a
   await probeAccountLiveness({ refresh: "refresh", access: "access", expires: Date.now() + 3600_000, projectId: "test" }, {}, {
     async read() { return { catalogModels: [], enabledModelIds: ["gemini-3.1-flash-image"] }; },
   });
-  assert.equal(requests[0].model, "gemini-3.8-flash-tiered");
+  assert.equal(requests[0].model, "gemini-3.8-flash-low");
   assert.equal(requests[0].request.generationConfig.maxOutputTokens, 1);
 });

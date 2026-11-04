@@ -13,7 +13,7 @@ import {
   splitEntityId,
 } from "../lib/models.js";
 
-/** The entities a paid (Google AI Pro) project advertises today. */
+/** The entities a paid (Google AI Pro) project advertises with a current fingerprint. */
 const LIVE_ENTITIES = new Set([
   "claude-opus-5-5-high",
   "claude-opus-5-5-low",
@@ -29,7 +29,13 @@ const LIVE_ENTITIES = new Set([
   "gemini-3.1-flash-image",
   "gemini-3.1-flash-lite",
   "gemini-3.5-flash-lite",
+  "gemini-3.8-flash-high",
+  "gemini-3.8-flash-low",
+  "gemini-3.8-flash-medium",
   "gemini-3.8-flash-tiered",
+  "gemini-4-argon-high",
+  "gemini-4-argon-low",
+  "gemini-4-argon-medium",
   "gpt-oss-120b-medium",
 ]);
 
@@ -41,7 +47,8 @@ test("the revamped Pro catalog lists the four requested models", () => {
   assert.deepEqual(argon.inputModalities, ["text", "image"]);
   assert.equal(argon.contextWindow, 1048576);
   assert.equal(argon.maxTokens, 65536);
-  assert.deepEqual(argon.reasoningEfforts, ["minimal", "low", "medium", "high"]);
+  // The flagship advertises one entity per level (low/medium/high).
+  assert.deepEqual(argon.reasoningEfforts, ["low", "medium", "high"]);
 });
 
 test("reasoning models offer every thinking level the backend can pin", () => {
@@ -50,10 +57,8 @@ test("reasoning models offer every thinking level the backend can pin", () => {
   // thinkingConfig (tiered Gemini), or keeps the declared ceiling when the
   // account only advertises a bare entity.
   const expected = {
-    "gemini-4-argon": ["minimal", "low", "medium", "high"],
+    "gemini-4-argon": ["low", "medium", "high"],
     "gemini-3.8-flash": ["minimal", "low", "medium", "high"],
-    "gemini-3.7-flash": ["minimal", "low", "medium", "high"],
-    "gemini-3.6-flash": ["minimal", "low", "medium", "high"],
     "gemini-3.5-flash": ["minimal", "low", "medium", "high"],
     "gemini-3-flash": ["minimal", "low", "medium", "high"],
     "gemini-3.5-flash-lite": ["low", "medium", "high"],
@@ -75,23 +80,23 @@ test("reasoning models offer every thinking level the backend can pin", () => {
 
 test("new model routing resolves to the backend-advertised entities", () => {
   const argon = ROUTING["gemini-4-argon"];
-  for (const effort of ["off", "minimal", "low", "medium", "high", "xhigh"]) {
-    const resolved =
-      effort === "off" || effort === undefined
-        ? argon.off
-        : argon.routing[effort] ?? argon.defaultRequestId;
-    assert.equal(resolved, "gemini-4-argon-high", "gemini-4-argon @ " + effort);
-  }
+  // Each effort keeps its own entity; only "off" falls back to the flagship level.
+  assert.equal(argon.off, "gemini-4-argon-high");
+  assert.equal(argon.routing.low, "gemini-4-argon-low");
+  assert.equal(argon.routing.minimal, "gemini-4-argon-low");
+  assert.equal(argon.routing.medium, "gemini-4-argon-medium");
+  assert.equal(argon.routing.high, "gemini-4-argon-high");
   assert.equal(ROUTING["claude-opus-5.5"].defaultRequestId, "claude-opus-5-5-high");
   assert.equal(ROUTING["claude-sonnet-5.5"].defaultRequestId, "claude-sonnet-5-5-high");
-  // gemini-3.8-flash targets the tiered entity a paid project really
-  // advertises; the live resolver in lib/index.js still prefers per-level
-  // siblings for accounts that have them.
-  assert.equal(ROUTING["gemini-3.8-flash"].off, "gemini-3.8-flash-tiered");
-  assert.equal(ROUTING["gemini-3.8-flash"].routing.low, "gemini-3.8-flash-tiered");
-  assert.equal(ROUTING["gemini-3.8-flash"].routing.medium, "gemini-3.8-flash-tiered");
-  assert.equal(ROUTING["gemini-3.8-flash"].routing.high, "gemini-3.8-flash-tiered");
-  assert.equal(ROUTING["gemini-3.7-flash"].routing.high, "gemini-3.7-flash-high");
+  // Gemini 3.8 exposes per-level siblings under a current client fingerprint.
+  assert.equal(ROUTING["gemini-3.8-flash"].off, "gemini-3.8-flash-low");
+  assert.equal(ROUTING["gemini-3.8-flash"].routing.low, "gemini-3.8-flash-low");
+  assert.equal(ROUTING["gemini-3.8-flash"].routing.medium, "gemini-3.8-flash-medium");
+  assert.equal(ROUTING["gemini-3.8-flash"].routing.high, "gemini-3.8-flash-high");
+  // Generations the backend never advertised are gone from the catalog.
+  assert.equal(ROUTING["gemini-3.7-flash"], undefined);
+  assert.equal(modelById("gemini-3.7-flash"), undefined);
+  assert.equal(modelById("gemini-3.6-flash"), undefined);
   // Claude 5.5 exposes one entity per level, so each effort keeps its own id.
   assert.equal(ROUTING["claude-opus-5.5"].routing.low, "claude-opus-5-5-low");
   assert.equal(ROUTING["claude-opus-5.5"].routing.medium, "claude-opus-5-5-medium");
@@ -192,12 +197,21 @@ test("Claude 4.6 models are marked deprecated with the removal date", () => {
 
 test("runtime entities follow what the account advertises, never a phantom id", () => {
   const argon = runtimeEntityCandidates("gemini-4-argon", "high", LIVE_ENTITIES);
-  assert.equal(argon[0], "gemini-3.8-flash-tiered");
+  assert.equal(argon[0], "gemini-4-argon-high");
+  assert.equal(runtimeEntityCandidates("gemini-4-argon", "low", LIVE_ENTITIES)[0], "gemini-4-argon-low");
+  assert.equal(runtimeEntityCandidates("gemini-4-argon", "medium", LIVE_ENTITIES)[0], "gemini-4-argon-medium");
   // Nothing the pool does not have can appear in the candidate list.
   assert.ok(argon.every((id) => LIVE_ENTITIES.has(id)));
 
+  // An account without the flagship still lands on an advertised entity of the
+  // same family instead of being sent to a phantom id.
+  const withoutArgon = new Set([...LIVE_ENTITIES].filter((id) => !id.includes("argon")));
+  const fallback = runtimeEntityCandidates("gemini-4-argon", "high", withoutArgon);
+  assert.equal(fallback[0], "gemini-3.8-flash-high");
+  assert.ok(fallback.every((id) => withoutArgon.has(id)));
+
   const flash = runtimeEntityCandidates("gemini-3.8-flash", "medium", LIVE_ENTITIES);
-  assert.equal(flash[0], "gemini-3.8-flash-tiered");
+  assert.equal(flash[0], "gemini-3.8-flash-medium");
 
   const opus = runtimeEntityCandidates("claude-opus-5.5", "medium", LIVE_ENTITIES);
   assert.equal(opus[0], "claude-opus-5-5-medium");
