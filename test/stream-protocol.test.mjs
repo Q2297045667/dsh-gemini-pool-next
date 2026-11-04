@@ -72,6 +72,67 @@ test("stream decodes fragmented UTF-8, reasoning, tools, usage and a final unter
   assert.ok(chunks.some((chunk) => chunk.type === "usage"));
 });
 
+test("no whitespace-only text part ever reaches the wire", async (t) => {
+  // The Claude backend behind Cloud Code rejects such a request with 400
+  // "messages: text content blocks must contain non-whitespace text".
+  const { requests } = await runRequest(t, {
+    modelId: "claude-sonnet-5.5",
+    messages: [
+      { role: "user", content: "   " },
+      { role: "assistant", content: [{ type: "text", text: "first answer" }] },
+      { role: "user", content: [{ type: "text", text: " \n\t " }] },
+      { role: "user", content: [{ type: "text", text: "" }] },
+      { role: "user", content: [{ type: "text", text: "real question" }] },
+      { role: "assistant", content: [{ type: "text", text: "second answer" }] },
+      { role: "user", content: [{ type: "text", text: "  " }] },
+    ],
+    options: { system: "   " },
+  });
+  const contents = requests[0].request.contents;
+  assert.ok(contents.length > 0);
+  for (const entry of contents) {
+    for (const part of entry.parts) {
+      if ("text" in part) assert.ok(String(part.text).trim().length > 0, `empty text part reached the wire: ${JSON.stringify(part)}`);
+    }
+  }
+  // The whitespace-only system text is dropped, the fixed instructions stay.
+  const systemParts = requests[0].request.systemInstruction.parts;
+  assert.equal(systemParts.length, 3);
+  for (const part of systemParts) assert.ok(part.text.trim().length > 0);
+  assert.equal(contents[0].role, "user");
+  assert.equal(contents[contents.length - 1].role, "user");
+  assert.ok(contents.some((entry) => entry.parts.some((part) => part.text === "real question")));
+});
+
+test("a tool that printed only whitespace sends a non-empty result", async (t) => {
+  // Real sessions contain tool results whose text is a single space; forwarding
+  // that verbatim made Claude answer 400 "messages: text content blocks must
+  // contain non-whitespace text".
+  const { requests } = await runRequest(t, {
+    modelId: "claude-sonnet-5.5",
+    messages: [
+      { role: "user", content: [{ type: "text", text: "run it" }] },
+      { role: "assistant", content: [{ type: "tool-call", id: "call_1", name: "inspect", arguments: "{}" }] },
+      { role: "user", content: [{ type: "tool-result", toolCallId: "call_1", content: [{ type: "text", text: " " }] }] },
+    ],
+  });
+  const parts = requests[0].request.contents.flatMap((entry) => entry.parts);
+  const results = parts.filter((part) => "functionResponse" in part);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].functionResponse.response.output, "(no output)");
+  for (const part of parts) {
+    if ("text" in part) assert.ok(String(part.text).trim().length > 0);
+  }
+});
+
+test("a conversation that is only whitespace still sends a valid request", async (t) => {
+  const { requests } = await runRequest(t, {
+    messages: [{ role: "user", content: "   " }, { role: "system", content: "" }],
+  });
+  const contents = requests[0].request.contents;
+  assert.deepEqual(contents, [{ role: "user", parts: [{ text: "Continue" }] }]);
+});
+
 test("stream surfaces nested upstream error frames and releases its reader", async (t) => {
   let cancelled = false;
   const response = new Response(new ReadableStream({

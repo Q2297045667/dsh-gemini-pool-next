@@ -13,6 +13,7 @@
 - **「No account in the current pool selection supports model "gemini-4-argon"」**：指纹修正后旗舰正常通告；同时保留兜底——目录刷新会把池内没有任何账号通告的模型从已勾选集合里摘掉（设置页只留可服务条目），已保存会话若仍指向这类模型，`resolveModelRoute` 会挑选池内同族最合适的可用模型（Gemini / Claude / 生图线各自独立，GPT-OSS 不跨族）并在日志说明替换，不再直接抛错
 - **`Antigravity API error (404 ... runtimeModel=gemini-3.7-flash-low/-high ... Requested entity was not found`)**：运行时实体解析改为以该账号 `fetchAvailableModels` 的真实实体集为准——先按请求等级找 `-low/-medium/-high` 实体，再找 `-tiered` 实体，再找裸 id，最后才在同族里挑下一个可用模型；删除指向不存在实体的旧回退链（3.8→3.7→3.6）与整段正则匹配旧路径，并移除后端从未通告的 Gemini 3.7 / 3.6 两代条目，请求不会再带上后端从未通告的 id
 - **「让模型思考等级支持更多等级」**：目录里的可选等级改为按账号真实实体计算——Gemini 4 Argon 与 Claude Opus/Sonnet 5.5 均为 Low / Medium / High（各自对应 `*-low/medium/high` 实体），Gemini 3.8 Flash 为 Minimal / Low / Medium / High（另有 tiered 实体兜底）；per-level 实体不再附带 `thinkingConfig`（等级已由实体 id 表达，可避免 Argon 对多余思考参数敏感），仅 tiered 实体经 thinkingConfig 表达等级，且被后端拒绝时先降一档重试
+- **`Antigravity API error (400 ... "messages: text content blocks must contain non-whitespace text")`**：请求侧不再下发空白文本块。真实会话里存在内容仅为一个空格的工具结果（`" "`），它被原样放进 `functionResponse.response.output`，Claude 后端把它当作只含空白的 text block 整条拒绝。现在：工具结果为空或只有空白时写 `(no output)`（出错写 `Tool failed`）；字符串内容为空/全空白时不再生成 text part；`type:"text"` 的空块被丢弃，丢弃后变空的整轮一并省略，并保证对话以 user 轮开头与结尾；`system` 只有空白时也不下发 systemInstruction 段
 - 模型替换后仍以「请求时选中的模型 id」写入回放元数据，避免宿主按请求 id 校验时丢弃整轮 thought signature
 - 账号池首次初始化合并并发加载，额度刷新统一串行落盘，避免账号丢失与临时文件重命名冲突；自动调度识别真实额度结构并按所有窗口的最小余量排序，主备候选不重复，手动模式严格锁定所选账号
 - 模型目录合并整个账号池，保留用户明确保存的空选择和下架元数据；首次发现只启用可用模型，Claude 4.6 不再误匹配 5.5；文本、生图与视觉调用跳过已知不支持目标模型的账号
@@ -22,7 +23,7 @@
 - OAuth 登录复用 token 交换逻辑，支持等待回调时取消，并发网页登录共享回调服务器，拒绝缺少有效 token 的成功响应，缺少浏览器启动器时不再崩溃；后台探活逐轮调度并随插件卸载清理
 
 ### 验证
-- `npm run check` 与带覆盖率的全量测试均为 215/215；语法检查覆盖全部发布模块，新增回归包括客户端指纹格式与目录门控、真实后端实体目录下的运行时实体解析（含 tiered 实体、按等级实体、裸实体三种形态）、不可用模型降级（含跨族降级与生图线绝不落到文本模型）、思考等级目录计算、已勾选集合剪枝、替换场景下的回放元数据、OAuth 本地回调、真实临时存储、模型级账号选择、Web API、CLI 及插件装卸生命周期
+- `npm run check` 与带覆盖率的全量测试均为 218/218；语法检查覆盖全部发布模块，新增回归包括请求里不出现空白文本块（空白用户轮、空白文本块、只输出空格的工具结果）、客户端指纹格式与目录门控、真实后端实体目录下的运行时实体解析（含 tiered 实体、按等级实体、裸实体三种形态）、不可用模型降级（含跨族降级与生图线绝不落到文本模型）、思考等级目录计算、已勾选集合剪枝、替换场景下的回放元数据、OAuth 本地回调、真实临时存储、模型级账号选择、Web API、CLI 及插件装卸生命周期
 - npm 包清单核对、解包导入和隔离 harness home 下的 CLI 冒烟检查通过；没有升级依赖或更改版本号
 - 使用模拟 Google 响应与临时凭证验证，未进行真实 Google 登录、线上模型调用或完整 DSH GUI 端到端验证；URL DNS 预检查与宿主 fetch 独立解析，不承诺防止 DNS 重绑定
 
