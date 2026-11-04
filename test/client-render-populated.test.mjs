@@ -17,7 +17,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const CLIENT_PATH = join(here, "..", "lib", "client.js");
 
 // 同 client-render.test.mjs：lib/client.js 含两个 ModuleLoader 块，本测试只
-// 针对本插件（dsh-gemini-pool）的设置页，故只取第一个块。
+// 针对本插件（dsh-gemini-pool-next）的设置页，故只取第一个块。
 function loadGeminiSource() {
   const full = readFileSync(CLIENT_PATH, "utf8");
   const marker = "window.__ModuleLoader__.load(";
@@ -195,7 +195,7 @@ function loadClient({ statusPayload, quotaPayload, requests, requestHandler }) {
 
   let captured = null;
   const windowStub = {
-    __ModuleLoader__: { load(mod) { if (mod && mod.id === "dsh-gemini-pool") captured = mod; } },
+    __ModuleLoader__: { load(mod) { if (mod && mod.id === "dsh-gemini-pool-next") captured = mod; } },
     document,
     addEventListener() {},
     removeEventListener() {},

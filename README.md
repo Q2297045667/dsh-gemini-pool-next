@@ -1,20 +1,20 @@
 <div align="center">
 
-# dsh-gemini-pool
+# dsh-gemini-pool-next
 
 **DSH 用上 Gemini 的方式 —— 让你的 Google AI Pro 订阅，成为编程模型池**
 
 [English](./README.en.md) · **简体中文**
 
-<a href="https://github.com/qikairo7/dsh-gemini-pool/releases"><img src="https://img.shields.io/github/v/release/qikairo7/dsh-gemini-pool?color=369eff&labelColor=black&logo=github&style=flat-square" alt="release"></a>
-<a href="https://github.com/qikairo7/dsh-gemini-pool/stargazers"><img src="https://img.shields.io/github/stars/qikairo7/dsh-gemini-pool?color=ffcb47&labelColor=black&style=flat-square" alt="stars"></a>
-<a href="https://github.com/qikairo7/dsh-gemini-pool/issues"><img src="https://img.shields.io/github/issues/qikairo7/dsh-gemini-pool?color=ff80eb&labelColor=black&style=flat-square" alt="issues"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/releases"><img src="https://img.shields.io/github/v/release/Q2297045667/dsh-gemini-pool-next?color=369eff&labelColor=black&logo=github&style=flat-square" alt="release"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/stargazers"><img src="https://img.shields.io/github/stars/Q2297045667/dsh-gemini-pool-next?color=ffcb47&labelColor=black&style=flat-square" alt="stars"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/issues"><img src="https://img.shields.io/github/issues/Q2297045667/dsh-gemini-pool-next?color=ff80eb&labelColor=black&style=flat-square" alt="issues"></a>
 <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square" alt="license"></a>
-<a href="https://github.com/qikairo7/dsh-gemini-pool/commits/master"><img src="https://img.shields.io/github/last-commit/qikairo7/dsh-gemini-pool?color=c4f042&labelColor=black&style=flat-square" alt="last commit"></a>
-<a href="https://github.com/qikairo7/dsh-gemini-pool/actions/workflows/check.yml"><img src="https://img.shields.io/github/actions/workflow/status/qikairo7/dsh-gemini-pool/check.yml?color=7ee787&labelColor=black&label=check&style=flat-square" alt="CI"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/commits/master"><img src="https://img.shields.io/github/last-commit/Q2297045667/dsh-gemini-pool-next?color=c4f042&labelColor=black&style=flat-square" alt="last commit"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/actions/workflows/check.yml"><img src="https://img.shields.io/github/actions/workflow/status/Q2297045667/dsh-gemini-pool-next/check.yml?color=7ee787&labelColor=black&label=check&style=flat-square" alt="CI"></a>
 
-[Issues](https://github.com/qikairo7/dsh-gemini-pool/issues) ·
-[讨论区](https://github.com/qikairo7/dsh-gemini-pool/discussions) ·
+[Issues](https://github.com/Q2297045667/dsh-gemini-pool-next/issues) ·
+[讨论区](https://github.com/Q2297045667/dsh-gemini-pool-next/discussions) ·
 [更新日志](./CHANGELOG.md) ·
 [安全策略](./SECURITY.md) ·
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) ·
@@ -33,7 +33,7 @@ Gemini 的强项正好落在编程场景上：**多模态**看图、**前端与 
 不止一个 Google 账号？全部加进来组成**账号池**：额度自动均衡、429 无感切换、坏账号自动冷却与探活恢复。设置页里每个账号一张卡片，每周与 5 小时额度实时可见。
 
 <p align="center">
-  <img src="./assets/images/screenshots/settings-1.png" alt="dsh-gemini-pool 设置页" width="78%">
+  <img src="./assets/images/screenshots/settings-1.png" alt="dsh-gemini-pool-next 设置页" width="78%">
 </p>
 
 ## 🆚 为什么需要它
@@ -76,7 +76,7 @@ Gemini 的强项正好落在编程场景上：**多模态**看图、**前端与 
 
 也可以去中转站按 token 付费买 Gemini API——那是另一种取舍：
 
-| | API 中转站 | dsh-gemini-pool |
+| | API 中转站 | dsh-gemini-pool-next |
 |---|:---:|:---:|
 | **钱** | 按 token 加价，站长赚差价 | 订阅费固定，用多少都是那份钱 |
 | **模型真假** | ⚠️ 可能被悄悄降级，难察觉 | ✅ 直连官方端点，模型永远是真的 |
@@ -93,8 +93,10 @@ Gemini 的强项正好落在编程场景上：**多模态**看图、**前端与 
 **1. 安装插件**
 
 ```bash
-dsh plugin --profile web add github:qikairo7/dsh-gemini-pool
+dsh plugin --profile web add github:Q2297045667/dsh-gemini-pool-next
 ```
+
+从旧版迁移时，先移除旧插件及其 Cordis 配置项，再安装 Next，避免同时加载。账号仍使用原存储路径，无需删除凭证文件。
 
 **2. 登录 Google 账号**
 
@@ -112,15 +114,15 @@ dsh plugin --profile web add github:qikairo7/dsh-gemini-pool
 ```bash
 npm run pack:dist
 # 包名带 package.json 里的当前版本号，按 dist/ 下实际生成的文件名安装
-dsh plugin --profile web add ./dist/dsh-gemini-pool-*.tgz
+dsh plugin --profile web add ./dist/dsh-gemini-pool-next-*.tgz
 ```
 
 若 DSH 版本不支持 `dsh plugin add`，手动复制包到 `$DSH_HOME/profiles/web/node_modules/`，并在 `cordis.patch.yml` 中添加：
 
 ```yaml
 - insert:
-    - id: dsh-gemini-pool
-      name: dsh-gemini-pool
+    - id: dsh-gemini-pool-next
+      name: dsh-gemini-pool-next
 ```
 
 </details>
@@ -227,7 +229,7 @@ flowchart LR
     LLM["llm/stream 请求流"]
     SEL["模型选择器 / 设置页"]
   end
-  subgraph PLUGIN["dsh-gemini-pool"]
+  subgraph PLUGIN["dsh-gemini-pool-next"]
     CORE["插件主体<br/>命令与 API 路由"]
     POOL["账号池管理<br/>调度 · 冷却 · 探活"]
     VB["视觉旁路桥<br/>图片转文字"]
@@ -252,7 +254,7 @@ flowchart LR
 
 ## 🤝 贡献
 
-欢迎 [Issue](https://github.com/qikairo7/dsh-gemini-pool/issues) 与 [PR](https://github.com/qikairo7/dsh-gemini-pool/pulls)，用法与想法也可以到 [讨论区](https://github.com/qikairo7/dsh-gemini-pool/discussions) 交流。提交前请先跑通本地检查：
+欢迎 [Issue](https://github.com/Q2297045667/dsh-gemini-pool-next/issues) 与 [PR](https://github.com/Q2297045667/dsh-gemini-pool-next/pulls)，用法与想法也可以到 [讨论区](https://github.com/Q2297045667/dsh-gemini-pool-next/discussions) 交流。提交前请先跑通本地检查：
 
 ```bash
 npm install    # 安装依赖

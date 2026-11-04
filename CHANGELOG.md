@@ -4,6 +4,9 @@
 
 ## Unreleased — 2026-11-04
 
+### Changed
+- 项目统一更名为 `dsh-gemini-pool-next`，同步 npm 包名、仓库链接、安装命令、Cordis 注册、客户端模块与测试；Antigravity 服务标识和现有账号存储路径保持兼容
+
 ### Fixed
 - 账号池首次初始化合并并发加载，额度刷新统一串行落盘，避免账号丢失与临时文件重命名冲突；自动调度识别真实额度结构并按所有窗口的最小余量排序，主备候选不重复，手动模式严格锁定所选账号
 - 模型目录合并整个账号池，保留用户明确保存的空选择和下架元数据；首次发现只启用可用模型，Claude 4.6 不再误匹配 5.5；文本、生图与视觉调用跳过已知不支持目标模型的账号
@@ -110,7 +113,7 @@
 ## v0.7.1 — 2026-09-29
 
 ### Fixed
-- **带图会话整轮失败（严重，[PR #3](https://github.com/qikairo7/dsh-gemini-pool/pull/3)，作者 [tensor-x](https://github.com/tensor-x)）**：`prepareRequestImages` 调用宿主 `attachments.readImageRequest` 时传的是 `{ maxPixels, maxBytes }`，而 DSH 的 `ImageRequestTarget` 契约要求 `width` / `height` 为安全正整数（`dsh-attachment` 的 `validateTarget` 逐一校验，缺 width 即抛 `Image request width must be a positive integer.`）——消息里只要有图片附件，本轮请求在组装阶段就抛错。修复为从附件 ref 自带的 `width` / `height` 出发，vendored 一份 `dsh-attachment` 的规范函数 `requestImageDimensions(width, height, maxPixels)`（按 `REQUEST_IMAGE_MAX_PIXELS` = 2048×2048 等比缩小），与 `{ maxBytes }` 合并成合法 target 传入。附件 ref 的 `width` / `height` 由 DSH 附件存储发布时写入（`ImageAttachmentRef` 必填字段），插件侧直接使用即类型安全；未带 `attachmentId` 的 inline 图仍走原有 legacy base64 路径，不受影响
+- **带图会话整轮失败（严重，[PR #3 修复提交](https://github.com/Q2297045667/dsh-gemini-pool-next/commit/cc896c0cc8eee1c61786b5aded44ee1cd6970383)，作者 [tensor-x](https://github.com/tensor-x)）**：`prepareRequestImages` 调用宿主 `attachments.readImageRequest` 时传的是 `{ maxPixels, maxBytes }`，而 DSH 的 `ImageRequestTarget` 契约要求 `width` / `height` 为安全正整数（`dsh-attachment` 的 `validateTarget` 逐一校验，缺 width 即抛 `Image request width must be a positive integer.`）——消息里只要有图片附件，本轮请求在组装阶段就抛错。修复为从附件 ref 自带的 `width` / `height` 出发，vendored 一份 `dsh-attachment` 的规范函数 `requestImageDimensions(width, height, maxPixels)`（按 `REQUEST_IMAGE_MAX_PIXELS` = 2048×2048 等比缩小），与 `{ maxBytes }` 合并成合法 target 传入。附件 ref 的 `width` / `height` 由 DSH 附件存储发布时写入（`ImageAttachmentRef` 必填字段），插件侧直接使用即类型安全；未带 `attachmentId` 的 inline 图仍走原有 legacy base64 路径，不受影响
 
 ### Added
 - `test/adapter-image-target.test.mjs`（作者 tensor-x）：走真实路径的回归测试——真实 `AccountPoolManager` + `AntigravityPoolAdapter` 构造，fake attachments 捕获实际收到的 target，断言 `width` / `height` / `maxBytes` 均为安全正整数
@@ -148,7 +151,7 @@
 
 ### Changed
 - 插件 `inject` 由 `["llm"]` 改为 `["llm", "credentials", "commands"]`（`export const inject` 与 `apply.inject` 同步）
-- `test/client-render.test.mjs` 与 `test/client-render-populated.test.mjs`：新增 `loadGeminiSource()`，只取 `lib/client.js` 中 id 为 `dsh-gemini-pool` 的那个模块块做静态扫描与执行；`__ModuleLoader__.load` 的桩也改为按 id 过滤。原因是 client.js 现在含两个模块块，不区分会让上游 Jet Hub 块的组件覆盖被捕获的本插件组件，导致 7 项渲染测试误报失败
+- `test/client-render.test.mjs` 与 `test/client-render-populated.test.mjs`：新增 `loadGeminiSource()`，只取 `lib/client.js` 中 id 为 `dsh-gemini-pool-next` 的那个模块块做静态扫描与执行；`__ModuleLoader__.load` 的桩也改为按 id 过滤。原因是 client.js 现在含两个模块块，不区分会让上游 Jet Hub 块的组件覆盖被捕获的本插件组件，导致 7 项渲染测试误报失败
 
 ### 本版本未覆盖的验证
 - **9 条融合路由的真实登录与调用未做端到端验证** —— 需要各平台的真实账号，当前环境没有。已验证的是：77 个 vendor 模块可正常 import、上游 `apply()` 可被调用、失败隔离生效（无宿主服务时只 warn 不崩）、原有 33 项测试全绿
@@ -189,7 +192,7 @@
 - 回归测试：所有候选 429 耗尽时须抛出限流错误（非 ReferenceError）并正确记一次冷却
 
 ### Docs
-- README 手动安装示例的包名去掉写死版本号，改用 `dsh-gemini-pool-*.tgz` 通配
+- README 手动安装示例的包名去掉写死版本号，改用 `dsh-gemini-pool-next-*.tgz` 通配
 
 ## v0.5.0 — 2026-09-25
 

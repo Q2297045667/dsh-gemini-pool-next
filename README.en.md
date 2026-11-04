@@ -1,20 +1,20 @@
 <div align="center">
 
-# dsh-gemini-pool
+# dsh-gemini-pool-next
 
 **The way to use Gemini in DSH — turn your Google AI Pro subscription into a coding model pool**
 
 **English** · [简体中文](./README.md)
 
-<a href="https://github.com/qikairo7/dsh-gemini-pool/releases"><img src="https://img.shields.io/github/v/release/qikairo7/dsh-gemini-pool?color=369eff&labelColor=black&logo=github&style=flat-square" alt="release"></a>
-<a href="https://github.com/qikairo7/dsh-gemini-pool/stargazers"><img src="https://img.shields.io/github/stars/qikairo7/dsh-gemini-pool?color=ffcb47&labelColor=black&style=flat-square" alt="stars"></a>
-<a href="https://github.com/qikairo7/dsh-gemini-pool/issues"><img src="https://img.shields.io/github/issues/qikairo7/dsh-gemini-pool?color=ff80eb&labelColor=black&style=flat-square" alt="issues"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/releases"><img src="https://img.shields.io/github/v/release/Q2297045667/dsh-gemini-pool-next?color=369eff&labelColor=black&logo=github&style=flat-square" alt="release"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/stargazers"><img src="https://img.shields.io/github/stars/Q2297045667/dsh-gemini-pool-next?color=ffcb47&labelColor=black&style=flat-square" alt="stars"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/issues"><img src="https://img.shields.io/github/issues/Q2297045667/dsh-gemini-pool-next?color=ff80eb&labelColor=black&style=flat-square" alt="issues"></a>
 <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square" alt="license"></a>
-<a href="https://github.com/qikairo7/dsh-gemini-pool/commits/master"><img src="https://img.shields.io/github/last-commit/qikairo7/dsh-gemini-pool?color=c4f042&labelColor=black&style=flat-square" alt="last commit"></a>
-<a href="https://github.com/qikairo7/dsh-gemini-pool/actions/workflows/check.yml"><img src="https://img.shields.io/github/actions/workflow/status/qikairo7/dsh-gemini-pool/check.yml?color=7ee787&labelColor=black&label=check&style=flat-square" alt="CI"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/commits/master"><img src="https://img.shields.io/github/last-commit/Q2297045667/dsh-gemini-pool-next?color=c4f042&labelColor=black&style=flat-square" alt="last commit"></a>
+<a href="https://github.com/Q2297045667/dsh-gemini-pool-next/actions/workflows/check.yml"><img src="https://img.shields.io/github/actions/workflow/status/Q2297045667/dsh-gemini-pool-next/check.yml?color=7ee787&labelColor=black&label=check&style=flat-square" alt="CI"></a>
 
-[Issues](https://github.com/qikairo7/dsh-gemini-pool/issues) ·
-[Discussions](https://github.com/qikairo7/dsh-gemini-pool/discussions) ·
+[Issues](https://github.com/Q2297045667/dsh-gemini-pool-next/issues) ·
+[Discussions](https://github.com/Q2297045667/dsh-gemini-pool-next/discussions) ·
 [Changelog](./CHANGELOG.md) ·
 [Security](./SECURITY.md) ·
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) ·
@@ -33,7 +33,7 @@ Gemini's strengths line up with coding work: **multimodal** input that reads ima
 Have more than one Google account? Add them all to a **pool**: quotas balance across accounts, 429s fail over to the next account, and failing accounts cool down and recover by themselves. Settings shows one card per account with live weekly and 5-hour quota bars.
 
 <p align="center">
-  <img src="./assets/images/screenshots/settings-1.png" alt="dsh-gemini-pool settings page" width="78%">
+  <img src="./assets/images/screenshots/settings-1.png" alt="dsh-gemini-pool-next settings page" width="78%">
 </p>
 
 ## 🆚 Why you need it
@@ -76,7 +76,7 @@ Using this plugin means you understand and accept these risks. This project is n
 
 You can also pay a relay for Gemini API access by the token. That is a different trade:
 
-| | API relay / reseller | dsh-gemini-pool |
+| | API relay / reseller | dsh-gemini-pool-next |
 |---|:---:|:---:|
 | **Cost** | pay-per-token with a markup | flat subscription, marginal cost ≈ 0 |
 | **Model authenticity** | ⚠️ may be silently downgraded | ✅ direct to official endpoints |
@@ -93,8 +93,10 @@ The relay has one real advantage: **bans hit the operator's accounts, yours stay
 **1. Install the plugin**
 
 ```bash
-dsh plugin --profile web add github:qikairo7/dsh-gemini-pool
+dsh plugin --profile web add github:Q2297045667/dsh-gemini-pool-next
 ```
+
+When migrating, remove the previous plugin and its Cordis configuration entry before installing Next to avoid loading both. Existing account storage paths are retained; keep your credential files.
 
 **2. Sign in with Google**
 
@@ -112,15 +114,15 @@ Your model can't see images? Paste anyway — a pool Gemini describes them to it
 ```bash
 npm run pack:dist
 # the package name carries the current version from package.json; install the file actually generated under dist/
-dsh plugin --profile web add ./dist/dsh-gemini-pool-*.tgz
+dsh plugin --profile web add ./dist/dsh-gemini-pool-next-*.tgz
 ```
 
 If your DSH does not support `dsh plugin add`, copy the package into `$DSH_HOME/profiles/web/node_modules/` and add to `cordis.patch.yml`:
 
 ```yaml
 - insert:
-    - id: dsh-gemini-pool
-      name: dsh-gemini-pool
+    - id: dsh-gemini-pool-next
+      name: dsh-gemini-pool-next
 ```
 
 </details>
@@ -222,7 +224,7 @@ flowchart LR
     LLM["llm/stream request flow"]
     SEL["Model selector / Settings"]
   end
-  subgraph PLUGIN["dsh-gemini-pool"]
+  subgraph PLUGIN["dsh-gemini-pool-next"]
     CORE["Plugin core<br/>commands & API routes"]
     POOL["Pool manager<br/>scheduling · cooldown · probing"]
     VB["Vision bridge<br/>image to text"]
@@ -247,7 +249,7 @@ Requests enter the plugin through the host: the vision bridge rewrites image req
 
 ## 🤝 Contributing
 
-Issues and PRs are welcome, and so are conversations in [Discussions](https://github.com/qikairo7/dsh-gemini-pool/discussions). Please run the local checks before opening a PR:
+Issues and PRs are welcome, and so are conversations in [Discussions](https://github.com/Q2297045667/dsh-gemini-pool-next/discussions). Please run the local checks before opening a PR:
 
 ```bash
 npm install    # install dependencies

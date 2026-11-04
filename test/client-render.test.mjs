@@ -194,7 +194,7 @@ function loadSettingsSection() {
   const windowStub = {
     __ModuleLoader__: {
       load(mod) {
-        if (mod && mod.id === "dsh-gemini-pool") captured = mod;
+        if (mod && mod.id === "dsh-gemini-pool-next") captured = mod;
       },
     },
     document,
@@ -228,7 +228,7 @@ function loadSettingsSection() {
   runner(windowStub, document, windowStub.MutationObserver, requireShim, globalThis);
 
   assert.ok(captured, "lib/client.js must call window.__ModuleLoader__.load(...)");
-  assert.equal(captured.id, "dsh-gemini-pool", "module id must stay dsh-gemini-pool");
+  assert.equal(captured.id, "dsh-gemini-pool-next", "module id must stay dsh-gemini-pool-next");
 
   const mod = captured.factory(requireShim);
   assert.ok(mod && typeof mod.apply === "function", "factory must return { apply(ctx) }");
@@ -291,7 +291,7 @@ test("rendered card contains the expected page chrome, not an empty tree", () =>
 
   assert.ok(text.trim().length > 0, "rendered output must not be empty/whitespace — that is the blank card");
   // Page header + description come straight from the zh dictionary.
-  assert.match(text, /Gemini 账号池/, "page title must render");
+  assert.match(text, /Gemini 账号池 Next/, "page title must render");
   assert.match(text, /账号调度策略/, "scheduler section must render");
 });
 
