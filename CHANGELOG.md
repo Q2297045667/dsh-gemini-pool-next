@@ -14,6 +14,7 @@
 - **`Antigravity API error (404 ... runtimeModel=gemini-3.7-flash-low/-high ... Requested entity was not found`)**：运行时实体解析改为以该账号 `fetchAvailableModels` 的真实实体集为准——先按请求等级找 `-low/-medium/-high` 实体，再找 `-tiered` 实体，再找裸 id，最后才在同族里挑下一个可用模型；删除指向不存在实体的旧回退链（3.8→3.7→3.6）与整段正则匹配旧路径，并移除后端从未通告的 Gemini 3.7 / 3.6 两代条目，请求不会再带上后端从未通告的 id
 - **「让模型思考等级支持更多等级」**：目录里的可选等级改为按账号真实实体计算——Gemini 4 Argon 与 Claude Opus/Sonnet 5.5 均为 Low / Medium / High（各自对应 `*-low/medium/high` 实体），Gemini 3.8 Flash 为 Minimal / Low / Medium / High（另有 tiered 实体兜底）；per-level 实体不再附带 `thinkingConfig`（等级已由实体 id 表达，可避免 Argon 对多余思考参数敏感），仅 tiered 实体经 thinkingConfig 表达等级，且被后端拒绝时先降一档重试
 - **`Antigravity API error (400 ... "messages: text content blocks must contain non-whitespace text")`**：请求侧不再下发空白文本块。用沙盒端点复现确认：**模型侧只含空白的 text block** 会触发这条 400（`{role:"model",parts:[{text:" "}]}` → 400；换成 user 轮则通过），空字符串 text 会报 `messages.N.content.N.text.text: Field required`，而只含空白的工具输出其实被 shim 转成 JSON 文本、不会触发。现在：任何轮次里只含空白的 text part 都被丢弃（丢弃后变空的整轮一并省略，并保证对话以 user 轮开头与结尾）；工具结果为空或只有空白时写 `(no output)`（出错写 `Tool failed`）；`system` 只有空白时也不下发 systemInstruction 段
+- **`Antigravity API error (400 ... "Function call is missing a thought_signature in functionCall parts ... function call `default_api:run_code`, position 140")`**：Gemini 3.x/4.x 拒绝回放一个没有有效 `thought_signature` 的 `functionCall`——而这条签名只有「产出它的那个运行时实体」才有，别的模型（deepseek / claude / 别的 gemini 实体）生成的工具调用在回放时必然没有。上下文压缩/切模型把整段历史重发时就会撞上。修复：对 Gemini 3.x/4.x 目标，凡不是「同一个请求模型 + 同一个运行时实体 + 首条签名有效」的工具调用，连同其结果一起降级成纯文本 `[Observation from \`name\` (args): …]`，保留信息且不再触发 400；Gemini 2.x 与 Claude/GPT 仍走原生 functionCall。沙盒端点实测：旧形状（无签名 functionCall）→ 400，新形状（文本 Observation）→ 200
 - **`Antigravity API error (400 ... "`tool_use` ids were found without `tool_result` blocks immediately after")`**：DSH 把工具结果作为独立的 `role:"tool"` 消息下发（call id 在 `toolCallId` / `source.callId` 上），而旧转换只认识「塞在 user 消息里的 `tool-result` 块」，工具结果因此被当成普通用户文本发出去——Claude 后端看到 tool_use 后面没有 tool_result，直接 400，并且这条历史之后任何一次 Claude 请求（包括上下文压缩和切模型）都会失败。现在 `role:"tool"` 消息转成 `functionResponse`，落在对应 tool_use 的**紧接着的下一轮**（结果若排在别的用户消息之后会被前插到正确位置）；历史以未完成的工具调用结尾时补占位结果而不是只补一句 `Continue`
 - 模型替换后仍以「请求时选中的模型 id」写入回放元数据，避免宿主按请求 id 校验时丢弃整轮 thought signature
 - 账号池首次初始化合并并发加载，额度刷新统一串行落盘，避免账号丢失与临时文件重命名冲突；自动调度识别真实额度结构并按所有窗口的最小余量排序，主备候选不重复，手动模式严格锁定所选账号
@@ -24,7 +25,7 @@
 - OAuth 登录复用 token 交换逻辑，支持等待回调时取消，并发网页登录共享回调服务器，拒绝缺少有效 token 的成功响应，缺少浏览器启动器时不再崩溃；后台探活逐轮调度并随插件卸载清理
 
 ### 验证
-- `npm run check` 与带覆盖率的全量测试均为 221/221；语法检查覆盖全部发布模块，新增回归包括请求里不出现空白文本块（空白用户轮、空白文本块、只输出空格的工具结果）、工具调用与结果严格相邻（role:"tool" 结果、未完成调用补占位、混合历史不变量）、客户端指纹格式与目录门控、真实后端实体目录下的运行时实体解析（含 tiered 实体、按等级实体、裸实体三种形态）、不可用模型降级（含跨族降级与生图线绝不落到文本模型）、思考等级目录计算、已勾选集合剪枝、替换场景下的回放元数据、OAuth 本地回调、真实临时存储、模型级账号选择、Web API、CLI 及插件装卸生命周期
+- `npm run check` 与带覆盖率的全量测试均为 222/222；语法检查覆盖全部发布模块，新增回归包括请求里不出现空白文本块（空白用户轮、空白文本块、只输出空格的工具结果）、工具调用与结果严格相邻（role:"tool" 结果、未完成调用补占位、混合历史不变量）、Gemini 3.x/4.x 目标对跨提供方工具调用的签名降级、客户端指纹格式与目录门控、真实后端实体目录下的运行时实体解析（含 tiered 实体、按等级实体、裸实体三种形态）、不可用模型降级（含跨族降级与生图线绝不落到文本模型）、思考等级目录计算、已勾选集合剪枝、替换场景下的回放元数据、OAuth 本地回调、真实临时存储、模型级账号选择、Web API、CLI 及插件装卸生命周期
 - npm 包清单核对、解包导入和隔离 harness home 下的 CLI 冒烟检查通过；没有升级依赖或更改版本号
 - 使用模拟 Google 响应与临时凭证验证，未进行真实 Google 登录、线上模型调用或完整 DSH GUI 端到端验证；URL DNS 预检查与宿主 fetch 独立解析，不承诺防止 DNS 重绑定
 

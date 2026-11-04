@@ -227,13 +227,33 @@ test("ending a stream consumer cancels and unlocks the upstream body", async (t)
   assert.equal(response.body.locked, false);
 });
 
+test("a Gemini target demotes cross-provider tool calls to text instead of failing", async (t) => {
+  // Gemini 3.x/4.x reject a replayed functionCall without a valid signature.
+  // Tool calls made by another provider (deepseek/claude) carry no Antigravity
+  // replay state, so they must become plain text, and their result too.
+  const { requests } = await runRequest(t, {
+    modelId: "gemini-3.8-flash",
+    messages: [
+      { role: "user", content: [{ type: "text", text: "run it" }] },
+      { role: "assistant", source: { kind: "model", model: "deepseek-chat", provider: "deepseek" }, content: [{ type: "tool-call", id: "call_00_ds", name: "run_code", arguments: '{}' }] },
+      { role: "tool", toolCallId: "call_00_ds", content: [{ type: "text", text: "hi" }] },
+      { role: "user", content: [{ type: "text", text: "continue" }] },
+    ],
+  });
+  const contents = requests[0].request.contents;
+  const flat = contents.flatMap((entry) => entry.parts);
+  assert.equal(flat.some((part) => part.functionCall), false, "no unsigned functionCall may reach a Gemini target");
+  assert.equal(flat.some((part) => part.functionResponse), false);
+  assert.ok(flat.some((part) => part.text && part.text.startsWith("[Observation from")), "demoted result is preserved as text");
+});
+
 test("tool requests preserve schema and replay signatures while clamping output tokens", async (t) => {
   const tool = { name: "inspect", description: "Read a path", parameters: { $schema: "ignored", type: "object", properties: { path: { type: "string" } }, required: ["path"] } };
   const { requests } = await runRequest(t, {
     options: { tools: [tool], toolChoice: "required", maxTokens: 1_000_000, reasoningEffort: "medium" },
     messages: [
       { role: "user", content: [{ type: "text", text: "inspect" }] },
-      { role: "assistant", source: { kind: "model", model: "gemini-3.8-flash", replayState: { kind: "antigravity", version: 1, provider: "antigravity", model: "gemini-3.8-flash", blocks: [{ type: "tool-call", thoughtSignature: "signed" }] } }, content: [{ type: "tool-call", id: "call_1", name: "inspect", arguments: '{"path":"src"}' }] },
+      { role: "assistant", source: { kind: "model", model: "gemini-3.8-flash", replayState: { kind: "antigravity", version: 1, provider: "antigravity", model: "gemini-3.8-flash", runtimeModel: "gemini-3.8-flash-medium", blocks: [{ type: "tool-call", thoughtSignature: "c2lnbmF0dXJl" }] } }, content: [{ type: "tool-call", id: "call_1", name: "inspect", arguments: '{"path":"src"}' }] },
       { role: "user", content: [{ type: "tool-result", toolCallId: "call_1", content: [{ type: "text", text: "found" }] }] },
     ],
   });
@@ -243,7 +263,7 @@ test("tool requests preserve schema and replay signatures while clamping output 
   assert.equal(model, "gemini-3.8-flash-medium");
   assert.equal(request.generationConfig.thinkingConfig, undefined);
   assert.equal(request.generationConfig.maxOutputTokens, 65536);
-  assert.equal(request.contents[1].parts[0].thought_signature, "signed");
+  assert.equal(request.contents[1].parts[0].thought_signature, "c2lnbmF0dXJl");
   assert.equal(request.contents[2].parts[0].functionResponse.name, "inspect");
   assert.deepEqual(request.contents[2].parts[0].functionResponse.response, { output: "found" });
   assert.equal(request.toolConfig.functionCallingConfig.mode, "ANY");
