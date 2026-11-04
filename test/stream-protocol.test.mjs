@@ -6,10 +6,30 @@ import { modelById } from "../lib/models.js";
 const tokenInfo = { token: "protocol-test", projectId: "test-project" };
 const textFrame = (text) => ({ response: { candidates: [{ content: { parts: [{ text }] } }] } });
 
-async function runRequest(t, { modelId = "gemini-3.8-flash", messages, frames, options = {}, attachments, response } = {}) {
+/** The entities a paid (Google AI Pro) project advertises today. */
+const LIVE_ENTITIES = {
+  "claude-opus-5-5-high": {},
+  "claude-opus-5-5-low": {},
+  "claude-opus-5-5-medium": {},
+  "claude-sonnet-5-5-high": {},
+  "claude-sonnet-5-5-low": {},
+  "claude-sonnet-5-5-medium": {},
+  "gemini-2.5-flash": {},
+  "gemini-2.5-pro": {},
+  "gemini-3-flash": {},
+  "gemini-3.1-flash-image": {},
+  "gemini-3.8-flash-tiered": {},
+  "gpt-oss-120b-medium": {},
+};
+
+// The live-catalog lookup is cached per access token, so every request needs
+// its own token to keep one test's catalog out of the next test.
+let requestCounter = 0;
+
+async function runRequest(t, { modelId = "gemini-3.8-flash", messages, frames, options = {}, attachments, response, entities = LIVE_ENTITIES } = {}) {
   const requests = [];
   t.mock.method(globalThis, "fetch", async (url, init) => {
-    if (String(url).includes(":fetchAvailableModels")) return Response.json({ models: {} });
+    if (String(url).includes(":fetchAvailableModels")) return Response.json({ models: entities });
     requests.push(JSON.parse(init.body));
     return response || new Response(frames || `data:${JSON.stringify(textFrame("ok"))}`);
   });
@@ -18,7 +38,7 @@ async function runRequest(t, { modelId = "gemini-3.8-flash", messages, frames, o
     model: modelId,
     messages: messages || [{ role: "user", content: [{ type: "text", text: "hi" }] }],
     ...options,
-  }, modelById(modelId), undefined, tokenInfo, attachments)) chunks.push(chunk);
+  }, modelById(modelId), undefined, { ...tokenInfo, token: `${tokenInfo.token}-${requestCounter += 1}` }, attachments)) chunks.push(chunk);
   return { requests, chunks };
 }
 
@@ -84,7 +104,9 @@ test("tool requests preserve schema and replay signatures while clamping output 
     ],
   });
   const { request, model } = requests[0];
-  assert.equal(model, "gemini-3.8-flash-medium");
+  // The live catalog advertises the tiered entity, so the requested level
+  // travels in thinkingConfig instead of a per-level model id.
+  assert.equal(model, "gemini-3.8-flash-tiered");
   assert.equal(request.generationConfig.thinkingConfig.thinkingLevel, "MEDIUM");
   assert.equal(request.generationConfig.maxOutputTokens, 65536);
   assert.equal(request.contents[1].parts[0].thought_signature, "signed");
@@ -131,6 +153,6 @@ test("liveness probe uses a text model when only image generation is enabled", a
   await probeAccountLiveness({ refresh: "refresh", access: "access", expires: Date.now() + 3600_000, projectId: "test" }, {}, {
     async read() { return { catalogModels: [], enabledModelIds: ["gemini-3.1-flash-image"] }; },
   });
-  assert.equal(requests[0].model, "gemini-3.8-flash-low");
+  assert.equal(requests[0].model, "gemini-3.8-flash-tiered");
   assert.equal(requests[0].request.generationConfig.maxOutputTokens, 1);
 });

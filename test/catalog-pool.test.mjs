@@ -142,6 +142,17 @@ test("first quota discovery preserves a model selection saved before discovery",
   assert.deepEqual((await settings.read()).enabledModelIds, []);
 });
 
+test("a refresh prunes models no account in the pool serves", async (t) => {
+  const { pool, settings, addAccount } = await setup(t);
+  const account = await addAccount("free");
+  stubCatalogFetch(t, { free: { "gemini-3.8-flash-low": {} } });
+  await fetchQuotaForAccount(account, pool, settings);
+  // Simulate a selection saved while the model was still advertised.
+  await settings.setEnabledModelIds(["gemini-3.8-flash", "gemini-4-argon"]);
+  await fetchQuotaForAccount(account, pool, settings);
+  assert.deepEqual((await settings.read()).enabledModelIds, ["gemini-3.8-flash"]);
+});
+
 test("available catalog rows without numeric quota beat unavailable rows in either order", () => {
   const unavailable = { quota: { fetchedAt: 1, catalogModels: [{ id: "gemini-4-argon", available: false }] } };
   const available = { quota: { fetchedAt: 2, catalogModels: [{ id: "gemini-4-argon", available: true }] } };

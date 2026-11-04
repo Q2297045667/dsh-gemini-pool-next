@@ -216,10 +216,15 @@ HTTPS_PROXY=http://127.0.0.1:7897
 | Gemini 3.8 / 3.7 / 3.6 / 3.5 Flash | Gemini |
 | Gemini 3.1 Pro · Gemini 3.1 Flash Image（生图） | Gemini |
 | Gemini 3 Flash · Gemini 2.5 Pro / Flash | Gemini |
+| Gemini 3.5 / 3.1 / 2.5 Flash Lite | Gemini |
 | **Claude Opus 5.5** · **Claude Sonnet 5.5**（Pro 会员） | Claude & GPT |
 | Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️（2026-11-18 起下架） · GPT-OSS 120B | Claude & GPT |
 
 同一额度池内共享每周与 5 小时额度；额度按 token 成本比例消耗，越重的模型消耗越快。
+
+**可用的模型与思考等级都以账号实际通告的后端实体为准。** 插件登录后拉取该账号的 `fetchAvailableModels`，只启用后端真正通告的实体：账号没有的模型（例如不发旗舰实体的项目上的 Gemini 4 Argon，或已被后端起走的 3.7 / 3.6 Flash）在设置页显示「账号不可用」且不会被勾选。若已保存的会话仍指向这类模型，请求会自动降级到池内最合适的可用模型，而不是把请求发到一个后端从未通告的实体上——后者正是 `Requested entity was not found`（404）的来源。
+
+思考等级同样来自真实实体：Claude 5.5 提供 Low / Medium / High 三档（分别对应 `claude-*-5-5-low/medium/high`），Gemini Flash 系列提供 Minimal / Low / Medium / High（tiered 实体经 `thinkingConfig.thinkingLevel` 下发；后端拒绝某个等级时自动降一档重试，而不是整条请求失败）。
 
 ## 🧭 架构
 

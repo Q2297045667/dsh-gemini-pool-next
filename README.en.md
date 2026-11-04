@@ -211,10 +211,15 @@ Tick a model in Settings to enable it. Enabled models float to the top, each sho
 | Gemini 3.8 / 3.7 / 3.6 / 3.5 Flash | Gemini |
 | Gemini 3.1 Pro · Gemini 3.1 Flash Image (image gen) | Gemini |
 | Gemini 3 Flash · Gemini 2.5 Pro / Flash | Gemini |
+| Gemini 3.5 / 3.1 / 2.5 Flash Lite | Gemini |
 | **Claude Opus 5.5** · **Claude Sonnet 5.5** (Pro) | Claude & GPT |
 | Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️ (removed by Antigravity on 2026-11-18) · GPT-OSS 120B | Claude & GPT |
 
 Models in the same pool share the weekly and 5-hour quotas. Quota drains in proportion to token cost, so heavier models run out faster.
+
+**Availability and thinking levels follow the backend entities the account really advertises.** After sign-in the plugin reads that account's `fetchAvailableModels` catalog and enables only the entities it serves: a model the account does not advertise (Gemini 4 Argon on a project without the flagship entity, or the 3.7 / 3.6 Flash lines the backend has moved past) shows the "unavailable on this account" badge and is not enabled. A session that still selects one of those models is served by the best available model in the pool instead of sending a request for an entity the backend never advertised — which is exactly what produced `Requested entity was not found` (404).
+
+Thinking levels come from those same entities: Claude 5.5 offers Low / Medium / High (the `claude-*-5-5-low/medium/high` entities), and the Gemini Flash line offers Minimal / Low / Medium / High (the tiered entity takes `thinkingConfig.thinkingLevel`; if the backend rejects one level the request steps down a level instead of failing).
 
 ## 🧭 Architecture
 
