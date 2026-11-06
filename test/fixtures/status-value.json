@@ -74,6 +74,20 @@
                 "remainingFraction": 1
               }
             ]
+          },
+          {
+            "displayName": "Gemini 4 Argon",
+            "description": "For paid Pro plans, Argon quota is separate from the standard Gemini Models quota.",
+            "buckets": [
+              {
+                "bucketId": "gemini-argon-wtu-weekly",
+                "displayName": "Gemini 4 Argon Weekly Limit",
+                "window": "weekly",
+                "resetTime": "2026-11-11T03:41:32Z",
+                "description": "You have used all of your weekly Argon limit, it will fully refresh on 2026-11-11.",
+                "remainingFraction": 0
+              }
+            ]
           }
         ],
         "groupDescription": "Within each group, models share a weekly limit and a 5-hour limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. The 5-hour limit smooths out aggregate demand to fairly distribute global capacity across all users, while your weekly limit is tied directly to your individual tier.",

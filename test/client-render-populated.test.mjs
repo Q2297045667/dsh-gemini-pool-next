@@ -292,6 +292,73 @@ test("quota rows render from real quota groups", async () => {
   assert.ok(/\d+%/.test(text) || /Claude|Gemini|GPT/i.test(text), "quota content must render");
 });
 
+test("model-specific quota groups render their model name instead of a generic heading", async () => {
+  // Regression:「Gemini 4 Argon」分组曾被 /gemini/i 折叠成通用 “Gemini 模型”，卡片里
+  // 出现两个同名分组，Argon 进度条也只剩 “每周额度剩余”——用户看不出它对应哪个模型。
+  const { mount, rt } = loadClient({ statusPayload: STATUS_FIXTURE, quotaPayload: STATUS_FIXTURE, requests: [] });
+  const text = await mount();
+
+  const quota = STATUS_FIXTURE.accounts[0].quota;
+  const argonGroup = (quota.groups || []).find((group) => group.displayName === "Gemini 4 Argon");
+  assert.ok(argonGroup, "fixture must carry the live Gemini 4 Argon group shape");
+
+  const groupTitles = rt.nodes
+    .filter((node) => node.props.className === "dsha-group-title")
+    .map((node) => node.children.filter((child) => typeof child === "string").join(""));
+
+  // (a) 具体模型分组：标题与行标签都带模型名（行标签 = 模型名 · 窗口文案）。
+  assert.ok(groupTitles.includes("Gemini 4 Argon"), `group titles: ${JSON.stringify(groupTitles)}`);
+  assert.match(text, /Gemini 4 Argon/, "the model-specific group must render its displayName verbatim");
+  assert.match(text, /Gemini 4 Argon · 每周额度剩余/, "the Argon bar label must carry its model name");
+  const argonBar = rt.nodes.find(
+    (node) => node.props.role === "progressbar"
+      && String(node.props["aria-label"] || "").includes("Gemini 4 Argon"),
+  );
+  assert.ok(argonBar, "the Argon progressbar must name its model in aria-label");
+  assert.match(argonBar.props["aria-label"], /每周额度剩余/);
+
+  // (b) 平台级分组仍走本地化通用名。
+  assert.equal(groupTitles.filter((title) => title === "Gemini 模型").length, 1);
+  assert.equal(groupTitles.filter((title) => title === "Claude 与 GPT 模型").length, 1);
+
+  // (c) “Gemini 模型” 只有一份：具体模型分组不再被折叠成与它同名的第二份标题。
+  assert.equal(
+    groupTitles.filter((title) => title === "Gemini 模型").length,
+    1,
+    `generic Gemini heading must appear once, got: ${JSON.stringify(groupTitles)}`,
+  );
+  assert.equal(groupTitles.filter((title) => /argon/i.test(title)).length, 1);
+
+  // (d) 百分比照常渲染：fixture 里 Argon 剩余 0。
+  assert.equal(argonBar.props["aria-valuenow"], 0);
+  assert.match(argonBar.props["aria-label"], /: 0%/);
+  assert.match(text, /(?:^|[^\d])0%/);
+});
+
+test("future model-specific groups stay verbatim and keep Claude/GPT cyan styling", async () => {
+  // 白名单只折叠平台级通用标题：将来后端若按具体模型拆组（如 “Claude Opus 5.5”），
+  // 即使标题里含 “claude” 也必须原样展示，而不是被吞成 “Claude 与 GPT 模型”。
+  const fixture = structuredClone(STATUS_FIXTURE);
+  const quota = fixture.accounts[0].quota;
+  quota.groups = [
+    {
+      displayName: "Claude Opus 5.5",
+      buckets: [{ displayName: "Weekly Limit Remaining", remainingFraction: 0.5 }],
+    },
+  ];
+  const { mount, rt } = loadClient({ statusPayload: fixture, quotaPayload: fixture, requests: [] });
+  const text = await mount();
+
+  const groupTitles = rt.nodes
+    .filter((node) => node.props.className === "dsha-group-title")
+    .map((node) => node.children.filter((child) => typeof child === "string").join(""));
+  assert.deepEqual(groupTitles, ["Claude Opus 5.5"]);
+  assert.match(text, /Claude Opus 5\.5 · 每周额度剩余/);
+  // Claude/GPT 的青色样式逻辑仍然生效（具体模型分组也沿用该规则）。
+  assert.equal(rt.nodes.filter((node) => node.props.className === "dsha-percent-cyan").length, 1);
+  assert.equal(rt.nodes.filter((node) => node.props.className === "dsha-fill-cyan").length, 1);
+});
+
 test("model list renders and marks enabled models", async () => {
   const requests = [];
   const { mount } = loadClient({ statusPayload: STATUS_FIXTURE, quotaPayload: STATUS_FIXTURE, requests });

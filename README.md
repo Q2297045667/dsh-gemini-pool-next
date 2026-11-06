@@ -88,7 +88,7 @@ Gemini 的强项正好落在编程场景上：**多模态**看图、**前端与 
 
 ## 🚀 快速开始
 
-**环境要求**：DSH `>=0.2.0 <0.3.0`（当前验证版本：0.2.2-alpha，兼容最新改版后的 Antigravity 模型目录）。运行 `dsh --version` 查看本机版本。
+**环境要求**：DSH `>=0.2.2-rc.1 <0.3.0`（当前验证版本：0.2.2-rc.1，兼容最新改版后的 Antigravity 模型目录）。运行 `dsh --version` 查看本机版本。
 
 **1. 安装插件**
 
@@ -198,7 +198,7 @@ HTTPS_PROXY=http://127.0.0.1:7897
   - 经 `/antigravity/api/config` 在 accounts.json 里配置 `visionEnabled: false`
 
   开关同时控制贴图准入与自动转述；关闭后，贴图行为恢复宿主原样。`visionModel` 指定代看模型；留空则自动挑选，设置页卡片可直接选择。
-- **已知依赖**：自动转述依赖宿主 `agent/pre-step` 事件、贴图准入依赖 `resolveModelInfo` 行为，宿主大版本升级后若贴图行为异常，需重审本节（当前在 DSH 0.2.2-alpha 验证）。
+- **已知依赖**：自动转述依赖宿主 `agent/pre-step` 事件、贴图准入依赖 `resolveModelInfo` 行为，宿主大版本升级后若贴图行为异常，需重审本节（当前在 DSH 0.2.2-rc.1 验证）。
 - **排障**：贴图后模型仍收到占位文本时，先运行 `/antigravity-doctor`，查看 `visionBridge` / `visionShim` 两行。两行显示 `registered` + `installed` 即为正常。服务端日志里，`[Antigravity Pool Vision]` 前缀的行记录桥的每一步判定（请求进入、模型判定、改写结果或放行原因）。贴图后一条前缀行都没有，说明事件没有到达桥。
 
 ## 🤖 模型一览
@@ -212,7 +212,7 @@ HTTPS_PROXY=http://127.0.0.1:7897
 
 | 模型 | 思考等级 | 额度池 |
 |---|---|---|
-| **Gemini 4 Argon**（Pro 会员旗舰） | Low / Medium / High | Gemini |
+| **Gemini 4 Argon**（Pro 会员旗舰） | Low / Medium / High | Gemini 4 Argon（Pro 独立额度；Ultra 并入 Gemini 大池） |
 | Gemini 3.8 Flash | Minimal / Low / Medium / High | Gemini |
 | Gemini 3.5 Flash Lite · Gemini 3.1 Flash Lite · Gemini 2.5 Flash Lite | — | Gemini |
 | Gemini 3.1 Flash Image（生图） | — | Gemini |
@@ -221,6 +221,8 @@ HTTPS_PROXY=http://127.0.0.1:7897
 | Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️（2026-11-18 起下架） · GPT-OSS 120B | — | Claude & GPT |
 
 同一额度池内共享每周与 5 小时额度；额度按 token 成本比例消耗，越重的模型消耗越快。
+
+设置页的额度条按后端返回的额度分组渲染：Gemini / Claude & GPT 这类平台级分组显示本地化的分组名，而后端按模型单独拆出的额度组（Pro 会员的 **Gemini 4 Argon** 就是独立的一组，只有一个每周额度桶）直接以该模型名作为进度条标题与行标签，因此「Gemini 4 Argon · 每周额度剩余」一眼可辨，不会和 Gemini 大池的每周额度混在一起。
 
 **目录由后端按客户端指纹（User-Agent）决定通告范围。** 同一个 Pro 账号实测：旧指纹 `antigravity/1.15.8 linux/amd64` 只返回 16 个实体，**没有 Gemini 4 Argon、也没有分级的 3.8**；改用当前指纹 `antigravity/hub/2.24.0 (aidev_client; os_type=…; arch=…; cl=1000335682)` 后返回 22 个实体，含 `gemini-4-argon-low/medium/high` 与 `gemini-3.8-flash-low/medium/high`。插件默认携带当前指纹（`ANTIGRAVITY_USER_AGENT` 可覆盖），并在指纹随升级变化时于启动自动重新发现目录。
 

@@ -2,9 +2,11 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## Unreleased — 2026-11-04
+## v0.10.0 — 2026-11-06
 
 ### Changed
+- **迁移到最新 DSH 0.2.2-rc.1**：devDependencies 全量对齐 `@deepseek-ai/dsh-*` 0.2.2-rc.1、cordis `~4.1.0`、schemastery `^3.19.0`，`engines.dsh` 从宽松的 `>=0.2.0 <0.3.0` 收紧为 `>=0.2.2-rc.1 <0.3.0`（旧范围里的 `>=0.2.0` 实际排除所有 `0.2.0-rc.*` 预发布，声明与真实可用区间不符）。逐包对 alpha.3 做字节级比对（`dsh-llm` / `dsh-timeout` / `dsh-home-paths` / `dsh-host-webserver` / `dsh-client-connection` / `dsh-commands` / `dsh-tools` / `dsh-attachment` / cordis / cordis-plugin-loader / cordis-plugin-include / schemastery）：本插件消费的 API、事件与客户端插件契约在 rc.1 与 alpha.3 完全一致，唯一差异是两处版本号和提交常量字符串，因此本次迁移不需要改动任何插件代码
+- **额度进度条按后端分组如实区分「平台级池」与「模型级池」**：设置页此前把所有命中 `/gemini/i` 的额度分组都折叠成本地化标题「Gemini 模型」，而真实账号的后端分组是 `Gemini Models` / `Claude and GPT models` / `Gemini 4 Argon` 三组——于是卡片里出现两个同名「Gemini 模型」，Gemini 4 Argon 的进度条也只剩「每周额度剩余」，看不出它对应哪个模型。现在只有平台级通用标题（`Gemini Models`、`Claude and GPT models`、`3p` / OpenAI / Anthropic 等，且不含版本号）走本地化文案，按模型拆出的分组（`Gemini 4 Argon`，以及将来 `Claude Opus 5.5` 这类）以模型名作为分组标题，行标签为「模型名 · 窗口文案」并同样进入 `aria-label`；Claude/GPT 的青色配色规则不变
 - 项目统一更名为 `dsh-gemini-pool-next`，同步 npm 包名、仓库链接、安装命令、Cordis 注册、客户端模块与测试；Antigravity 服务标识和现有账号存储路径保持兼容
 - **模型目录与运行时实体改由账号实际通告的实体驱动**：`parseCatalogModels` 的归属判定从「宽松家族正则」改为结构化匹配（同 base、`-low/-medium/-high` 级别实体、`-tiered` 实体、`-thinking` 实体、`别名`、`名称 (等级)` 标签），不再出现 `gemini-3.5-flash-lite` 被算成 `gemini-3.5-flash`、`gemini-3.1-flash-lite` 被算成 `gemini-2.5-flash` 的串行；新增后端真实通告的 Gemini 3.5 / 3.1 / 2.5 Flash Lite 三个条目
 
@@ -25,8 +27,9 @@
 - OAuth 登录复用 token 交换逻辑，支持等待回调时取消，并发网页登录共享回调服务器，拒绝缺少有效 token 的成功响应，缺少浏览器启动器时不再崩溃；后台探活逐轮调度并随插件卸载清理
 
 ### 验证
-- `npm run check` 与带覆盖率的全量测试均为 222/222；语法检查覆盖全部发布模块，新增回归包括请求里不出现空白文本块（空白用户轮、空白文本块、只输出空格的工具结果）、工具调用与结果严格相邻（role:"tool" 结果、未完成调用补占位、混合历史不变量）、Gemini 3.x/4.x 目标对跨提供方工具调用的签名降级、客户端指纹格式与目录门控、真实后端实体目录下的运行时实体解析（含 tiered 实体、按等级实体、裸实体三种形态）、不可用模型降级（含跨族降级与生图线绝不落到文本模型）、思考等级目录计算、已勾选集合剪枝、替换场景下的回放元数据、OAuth 本地回调、真实临时存储、模型级账号选择、Web API、CLI 及插件装卸生命周期
-- npm 包清单核对、解包导入和隔离 harness home 下的 CLI 冒烟检查通过；没有升级依赖或更改版本号
+- `npm run check` 全量测试 224/224（含本次新增的两条客户端渲染回归：具体模型额度分组以模型名作标题与行标签、未来 `Claude Opus 5.5` 这类按模型拆组仍原样展示并保留青色配色）；语法检查覆盖全部发布模块，既有回归包括请求里不出现空白文本块（空白用户轮、空白文本块、只输出空格的工具结果）、工具调用与结果严格相邻（role:"tool" 结果、未完成调用补占位、混合历史不变量）、Gemini 3.x/4.x 目标对跨提供方工具调用的签名降级、客户端指纹格式与目录门控、真实后端实体目录下的运行时实体解析（含 tiered 实体、按等级实体、裸实体三种形态）、不可用模型降级（含跨族降级与生图线绝不落到文本模型）、思考等级目录计算、已勾选集合剪枝、替换场景下的回放元数据、OAuth 本地回调、真实临时存储、模型级账号选择、Web API、CLI 及插件装卸生命周期
+- **DSH 0.2.2-rc.1 真机迁移验证**：把 alpha.3 的每个依赖包 `npm pack` 后与 rc.1（仓库安装副本与 harness 自带副本，两者字节一致）逐文件比对，结论为本插件消费的全部 API / 事件 / 客户端插件契约无差异，故无插件代码改动，只有依赖与 `engines.dsh` 升级；在隔离 `DSH_HOME=/tmp/...`（全程不碰 `~/.dsh` 与线上 3080）下用 `npm pack` 产物 `dsh plugin add` 装进临时 profile，`dsh --profile smoke --dump-config` 可见插件被并入 `dsh.profile.bundles`，另起 `--port 3999` 真实启动：日志出现 `[Antigravity Pool] vision admission shim installed …` 且无 error/warn，未认证请求 `/` 与 `/antigravity/api/status` 均 401，带启动 token 后 `/` 200、状态 200 JSON，客户端启动图里 `dsh-gemini-pool-next` 条目带 `inject: ["slots","locale"]` 且 bundle 200（71.7 KB，含 `window.__ModuleLoader__.load`、`ctx.slots.inject`、`settings.section`），验证后干净退出、端口释放
+- npm 包清单核对、解包导入和隔离 harness home 下的 CLI 冒烟检查通过
 - 使用模拟 Google 响应与临时凭证验证，未进行真实 Google 登录、线上模型调用或完整 DSH GUI 端到端验证；URL DNS 预检查与宿主 fetch 独立解析，不承诺防止 DNS 重绑定
 
 ## v0.9.0 — 2026-11-03
