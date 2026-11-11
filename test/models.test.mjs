@@ -4,13 +4,16 @@ import {
   MODELS,
   ROUTING,
   baseModelMatcher,
+  canonicalModelId,
   compareAntigravityModels,
+  familyFallbackBases,
   getMaxOutputTokens,
   inferModelShape,
   modelById,
   reasoningLevelsForModel,
   runtimeEntityCandidates,
   splitEntityId,
+  staticRequestModelId,
 } from "../lib/models.js";
 
 /** The entities a paid (Google AI Pro) project advertises with a current fingerprint. */
@@ -248,4 +251,136 @@ test("thinking levels reflect the live entities of the account", () => {
   // Bare-only entities keep their declared ceiling and never invent a level.
   assert.deepEqual(reasoningLevelsForModel("gemini-2.5-pro", ["gemini-2.5-pro"]), ["low", "high"]);
   assert.deepEqual(reasoningLevelsForModel("gpt-oss-120b", ["gpt-oss-120b-medium"]), ["medium"]);
+});
+
+test("Gemini 4 Carbon is a first-class catalog model capped at 262144", () => {
+  const carbon = modelById("gemini-4-carbon");
+  assert.ok(carbon, "gemini-4-carbon must be catalogued");
+  assert.equal(carbon.name, "Gemini 4 Carbon");
+  assert.deepEqual(carbon.inputModalities, ["text", "image"]);
+  assert.equal(carbon.contextWindow, 1048576);
+  assert.equal(carbon.maxTokens, 262144);
+  assert.deepEqual(carbon.reasoningEfforts, ["low", "medium", "high"]);
+  assert.match(carbon.description, /Ultra/i);
+  // Ultra-only: selectable only once the account's live catalog serves it.
+  assert.equal(carbon.available, false);
+  // The backend's disabled placeholder is never a public model of its own.
+  assert.equal(modelById("gemini-4-carbon-disabled"), undefined);
+  assert.equal(modelById("gemini-4-carbon-high"), undefined);
+});
+
+test("Gemini 4 Carbon routing mirrors Argon's per-level entities", () => {
+  const carbon = ROUTING["gemini-4-carbon"];
+  assert.ok(carbon, "gemini-4-carbon must have a routing entry");
+  assert.equal(carbon.off, "gemini-4-carbon-high");
+  assert.equal(carbon.defaultRequestId, "gemini-4-carbon-high");
+  assert.equal(carbon.routing.minimal, "gemini-4-carbon-low");
+  assert.equal(carbon.routing.low, "gemini-4-carbon-low");
+  assert.equal(carbon.routing.medium, "gemini-4-carbon-medium");
+  assert.equal(carbon.routing.high, "gemini-4-carbon-high");
+  assert.equal(carbon.routing.xhigh, "gemini-4-carbon-high");
+  assert.equal(staticRequestModelId("gemini-4-carbon", "off"), "gemini-4-carbon-high");
+  assert.equal(staticRequestModelId("gemini-4-carbon", undefined), "gemini-4-carbon-high");
+  assert.equal(staticRequestModelId("gemini-4-carbon", "low"), "gemini-4-carbon-low");
+  assert.equal(staticRequestModelId("gemini-4-carbon", "medium"), "gemini-4-carbon-medium");
+  assert.equal(staticRequestModelId("gemini-4-carbon", "high"), "gemini-4-carbon-high");
+  // The disabled placeholder never gets a routing entry of its own.
+  assert.equal(ROUTING["gemini-4-carbon-disabled"], undefined);
+});
+
+test("Gemini 4 Carbon keeps its 262144 output ceiling on every entity", () => {
+  for (const runtimeModel of [
+    "gemini-4-carbon",
+    "gemini-4-carbon-low",
+    "gemini-4-carbon-medium",
+    "gemini-4-carbon-high",
+    "gemini-4-carbon-disabled",
+  ]) {
+    assert.equal(getMaxOutputTokens("gemini-4-carbon", runtimeModel), 262144, runtimeModel);
+    assert.equal(getMaxOutputTokens("gemini-4-carbon-disabled", runtimeModel), 262144, runtimeModel);
+  }
+  // Other models keep their own ceilings.
+  assert.equal(getMaxOutputTokens("gemini-4-argon", "gemini-4-argon-high"), 65536);
+  assert.equal(getMaxOutputTokens("claude-opus-5.5", "claude-opus-5-5-high"), 64000);
+});
+
+test("Gemini 4 Carbon matcher and entity splitter recognise live and disabled ids", () => {
+  const matches = baseModelMatcher("gemini-4-carbon");
+  assert.ok(matches("gemini-4-carbon"));
+  assert.ok(matches("gemini-4-carbon-low"));
+  assert.ok(matches("gemini-4-carbon-medium"));
+  assert.ok(matches("gemini-4-carbon-high"));
+  // The live Pro-plan payload advertises only this placeholder.
+  assert.ok(matches("gemini-4-carbon-disabled"));
+  // Label matching covers the backend display names.
+  assert.ok(matches("Gemini 4 Carbon"));
+  assert.ok(matches("Gemini 4 Carbon (High)"));
+  // Structural matching still refuses neighbouring models.
+  assert.equal(matches("gemini-4-argon-high"), false);
+  assert.equal(matches("gemini-3.8-flash-high"), false);
+  assert.equal(baseModelMatcher("gemini-4-argon")("gemini-4-carbon-high"), false);
+
+  assert.deepEqual(splitEntityId("gemini-4-carbon-high"), {
+    base: "gemini-4-carbon",
+    kind: "level",
+    level: "high",
+  });
+  assert.deepEqual(splitEntityId("gemini-4-carbon-disabled"), {
+    base: "gemini-4-carbon",
+    kind: "disabled",
+    level: undefined,
+  });
+  assert.equal(canonicalModelId("Gemini-4-Carbon-High"), "gemini-4-carbon-high");
+  assert.equal(canonicalModelId("gemini-4-carbon-disabled"), "gemini-4-carbon-disabled");
+
+  assert.equal(inferModelShape("gemini-4-carbon").name, "Gemini 4 Carbon");
+  assert.equal(inferModelShape("gemini-4-carbon-high").name, "Gemini 4 Carbon");
+  assert.equal(inferModelShape("gemini-4-carbon-high").maxTokens, 262144);
+  assert.equal(inferModelShape("gemini-4-carbon-disabled").name, "Gemini 4 Carbon");
+  assert.equal(inferModelShape("gemini-4-carbon-disabled").maxTokens, 262144);
+  assert.deepEqual(inferModelShape("gemini-4-carbon-low").reasoningEfforts, ["low", "medium", "high"]);
+});
+
+test("Gemini 4 Carbon is never a fallback target while it is unavailable", () => {
+  const argonFallbacks = familyFallbackBases("gemini-4-argon");
+  assert.equal(argonFallbacks.includes("gemini-4-carbon"), false);
+  // Every other fallback is untouched.
+  assert.ok(argonFallbacks.includes("gemini-3.8-flash"));
+  // Carbon may still step down onto the rest of its own family.
+  assert.ok(familyFallbackBases("gemini-4-carbon").includes("gemini-4-argon"));
+  // Offline fallback resolution therefore cannot invent a carbon entity.
+  assert.equal(staticRequestModelId("gemini-4-argon", "high"), "gemini-4-argon-high");
+});
+
+test("a synthetic entity set containing the disabled placeholder never routes to it", () => {
+  // Even if unfiltered payload data reached the resolver, the placeholder is
+  // not a candidate id: it never appears in a candidate list.
+  assert.deepEqual(runtimeEntityCandidates("gemini-4-carbon", "high", new Set(["gemini-4-carbon-disabled"])), []);
+  const mixed = new Set(["gemini-4-carbon-disabled", "gemini-4-argon-high", "gemini-3.8-flash-low"]);
+  const candidates = runtimeEntityCandidates("gemini-4-carbon", "high", mixed);
+  assert.equal(candidates[0], "gemini-4-argon-high");
+  assert.ok(
+    candidates.every((id) => id !== "gemini-4-carbon-disabled"),
+    "the backend-disabled placeholder must never be requested",
+  );
+  // Other models are unaffected by the placeholder in the set.
+  assert.equal(runtimeEntityCandidates("gemini-4-argon", "high", mixed)[0], "gemini-4-argon-high");
+});
+
+test("usable Gemini 4 Carbon entities route per level like Argon", () => {
+  const entities = new Set(["gemini-4-carbon-low", "gemini-4-carbon-medium", "gemini-4-carbon-high"]);
+  assert.deepEqual(runtimeEntityCandidates("gemini-4-carbon", "high", entities), [
+    "gemini-4-carbon-high",
+    "gemini-4-carbon-medium",
+    "gemini-4-carbon-low",
+  ]);
+  assert.equal(runtimeEntityCandidates("gemini-4-carbon", "medium", entities)[0], "gemini-4-carbon-medium");
+  assert.equal(runtimeEntityCandidates("gemini-4-carbon", "low", entities)[0], "gemini-4-carbon-low");
+  assert.equal(runtimeEntityCandidates("gemini-4-carbon", "off", entities)[0], "gemini-4-carbon-high");
+  assert.deepEqual(reasoningLevelsForModel("gemini-4-carbon", [...entities]), ["low", "medium", "high"]);
+  // A requested level the account lacks steps down within carbon first.
+  const short = new Set(["gemini-4-carbon-low", "gemini-4-carbon-medium"]);
+  assert.equal(runtimeEntityCandidates("gemini-4-carbon", "high", short)[0], "gemini-4-carbon-medium");
+  // The level suffix pins the level, so no thinking option may ride along.
+  assert.equal(splitEntityId("gemini-4-carbon-high").kind, "level");
 });

@@ -2,6 +2,23 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.11.0 — 2026-11-11
+
+### Changed
+- **额度显示：Gemini 4 独立额度组改显示模型名**：后端该分组的 displayName 是 `Gemini 4 Argon`（Pro 会员独立额度，只有一个每周额度桶），设置页额度卡片现在把它统一显示为「**Gemini 4 模型**」（英文界面 `Gemini 4 Models`）——分组标题、进度条行标签（`Gemini 4 模型 · 每周额度剩余`）与 `aria-label` 三处一致，不再把后端代号摆给用户；正则按 Gemini 4 模型族匹配，将来后端换成 `Gemini 4 Carbon` 等代号同样折叠。平台级通用分组（`Gemini Models` / `Claude and GPT models`）继续走本地化通用名，其他按模型拆分的分组仍原样显示后端 displayName；无法识别的窗口文案若仍带 Gemini 4 代号，回退为「额度限制」，保证代号不会从行标签漏出
+- **复核 DSH 最新版**：npm `dist-tags`（latest/next）与 GitHub Releases 均停在 `dsh-v0.2.2-rc.1`（2026-11-04 发布），本机 CLI 已是该版本；插件的 devDeps / `engines.dsh`（`>=0.2.2-rc.1 <0.3.0`）在 v0.10.0 已对齐，本次无需再迁移。仍在隔离 `DSH_HOME` 下重跑一次 0.2.2-rc.1 的装载/启动冒烟，确认新版模型处理在最新宿主上正常
+
+### Added
+- **Gemini 4 Carbon（Ultra 专属新旗舰）纳入模型目录**：静态目录新增 `gemini-4-carbon` —— 1M 上下文、**262144** 输出上限、思考等级 Low / Medium / High，路由表按 `gemini-4-carbon-{low,medium,high}` 逐级映射（默认 high），运行时输出上限对 `gemini-4-carbon`、各级实体与禁用占位实体都按 262144 计算。Pro 账号当前后端只通告禁用占位实体，所以设置页把它显示为「账号不可用」，徽标 tooltip 直接引用后端 `tagDescription`（“Gemini 4 Carbon is currently available to Ultra plan subscribers.”）；账号一旦真实通告可用实体，就自动转为可用并按等级路由
+
+### Fixed
+- **禁用占位实体不再被当成可用模型（`gemini-4-carbon-disabled` 会进目录、被自动勾选并发出请求）**：后端把本套餐不可用的模型也放进 `fetchAvailableModels`，只用 `disabled: true` / `-disabled` 后缀 / `tagTitle: "Unavailable"` 标注。旧版本只过滤 `isInternal`、`chat_*`、`tab_*`，于是 `gemini-4-carbon-disabled` 被当成名为「Gemini 4 Carbon」的可用模型写进目录、在首次发现时自动勾选（用户存档里确实存在），选中后请求会打到被后端禁用的实体。现在：`parseCatalogModels` / `parseModels` / `fetchAvailableEntities` / `isUsableRuntimeModelId` 全部识别并排除禁用实体（启用集合与目录读取也过滤旧版本遗留的 raw `-disabled` id）；禁用实体的 `tagDescription` 作为 `unavailableReason` 挂到对应的基础模型上，由设置页 tooltip 呈现。升级后首次额度刷新即剪掉旧的 raw id 与不可用条目，其余模型行为不变
+
+### 验证
+- `npm run check` 全量 **248/248**（v0.10.0 基线 224 + 新增 24 条）：新增覆盖禁用实体识别（`disabled` 标记 / 后缀 / Unavailable 标签）、禁用实体不进目录/额度行/运行时实体、`unavailableReason` 透出、Gemini 4 Carbon 静态条目（262144 上限与 Low/Medium/High）、模拟 Ultra 实体可用后按级路由、真实 payload 合并下启用集合剪枝（旧存档里的 `gemini-4-carbon-disabled` 被移除）、以及额度卡片「Gemini 4 模型」中英文渲染与工具提示
+- 用当天真实响应核对：生产端点 26 实体 + 沙盒端点 27 实体（含 `gemini-4-carbon-disabled`）合并后，目录里 `gemini-4-carbon` 为 `available:false` 且带 Ultra 原因，目录中无任何 `-disabled` 原始条目，Gemini 4 Argon / 3.8 Flash / Claude 5.5 / GPT-OSS 仍为可用；`isUsableRuntimeModelId` 对 `-disabled` 返回 false
+- 隔离 `DSH_HOME` 下用 `npm pack` 产物装进临时 profile、`dsh --profile smoke --dump-config` 与 `--port 3999` 真实启动冒烟：插件注册无 error/warn，客户端 bundle 200 且包含新 i18n key 与模型处理代码；验证后干净退出、临时目录清理
+
 ## v0.10.0 — 2026-11-06
 
 ### Changed

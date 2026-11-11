@@ -213,6 +213,7 @@ HTTPS_PROXY=http://127.0.0.1:7897
 | 模型 | 思考等级 | 额度池 |
 |---|---|---|
 | **Gemini 4 Argon**（Pro 会员旗舰） | Low / Medium / High | Gemini 4 Argon（Pro 独立额度；Ultra 并入 Gemini 大池） |
+| **Gemini 4 Carbon**（Ultra 专属） | Low / Medium / High | Gemini 4 Argon（独立额度组）；Pro 账号后端只通告禁用占位实体，目录标记为「账号不可用」 |
 | Gemini 3.8 Flash | Minimal / Low / Medium / High | Gemini |
 | Gemini 3.5 Flash Lite · Gemini 3.1 Flash Lite · Gemini 2.5 Flash Lite | — | Gemini |
 | Gemini 3.1 Flash Image（生图） | — | Gemini |
@@ -222,9 +223,11 @@ HTTPS_PROXY=http://127.0.0.1:7897
 
 同一额度池内共享每周与 5 小时额度；额度按 token 成本比例消耗，越重的模型消耗越快。
 
-设置页的额度条按后端返回的额度分组渲染：Gemini / Claude & GPT 这类平台级分组显示本地化的分组名，而后端按模型单独拆出的额度组（Pro 会员的 **Gemini 4 Argon** 就是独立的一组，只有一个每周额度桶）直接以该模型名作为进度条标题与行标签，因此「Gemini 4 Argon · 每周额度剩余」一眼可辨，不会和 Gemini 大池的每周额度混在一起。
+设置页的额度条按后端返回的额度分组渲染：Gemini / Claude & GPT 这类平台级分组显示本地化的分组名，而后端按模型单独拆出的额度组会显示成本地化的模型名 —— Pro 会员的 Gemini 4 独立额度组（后端 displayName 为 `Gemini 4 Argon`，只有一个每周额度桶）在卡片上统一显示为「**Gemini 4 模型**」，行标签是「Gemini 4 模型 · 每周额度剩余」，既不会和 Gemini 大池的每周额度混在一起，也不会把后端代号摆给用户看。
 
 **目录由后端按客户端指纹（User-Agent）决定通告范围。** 同一个 Pro 账号实测：旧指纹 `antigravity/1.15.8 linux/amd64` 只返回 16 个实体，**没有 Gemini 4 Argon、也没有分级的 3.8**；改用当前指纹 `antigravity/hub/2.24.0 (aidev_client; os_type=…; arch=…; cl=1000335682)` 后返回 22 个实体，含 `gemini-4-argon-low/medium/high` 与 `gemini-3.8-flash-low/medium/high`。插件默认携带当前指纹（`ANTIGRAVITY_USER_AGENT` 可覆盖），并在指纹随升级变化时于启动自动重新发现目录。
+
+**后端把「本套餐不可用」的模型也放在目录里。** Gemini 4 Carbon 当前是 Ultra 专属：Pro 账号的 `fetchAvailableModels` 只会通告一个 `gemini-4-carbon-disabled` 占位实体（`disabled: true`、`tagTitle: "Unavailable"`、`tagDescription` 写明仅 Ultra 可用）。插件把这类禁用实体当作「非可用证据」：它不会变成可选模型、不会自动勾选、也不会被当作运行时实体发请求；设置页里该模型显示为「账号不可用」，徽标 tooltip 直接给出后端的原因。等到账号真的通告 `gemini-4-carbon-low/medium/high` 这些可用实体时，模型会自动变为可用并按等级路由（输出上限 262144）。
 
 **可用的模型与思考等级都以账号实际通告的实体为准。** 插件登录后拉取该账号的 `fetchAvailableModels`，只启用后端真正通告的实体：账号没有的模型在设置页显示「账号不可用」且不会被勾选。若已保存的会话仍指向这类模型，请求会自动降级到池内最合适的可用模型，而不是把请求发到一个后端从未通告的实体上——后者正是 `Requested entity was not found`（404）的来源。
 

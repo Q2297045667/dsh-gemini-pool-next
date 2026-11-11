@@ -173,8 +173,41 @@ function renderTree(node, rt, depth = 0) {
   return "";
 }
 
+/** Collect every visible string (text nodes + aria-label) inside one rendered subtree. */
+function collectVisibleText(node, out = []) {
+  if (node === null || node === undefined || node === false || node === true) return out;
+  if (typeof node === "string" || typeof node === "number") {
+    out.push(String(node));
+    return out;
+  }
+  if (Array.isArray(node)) {
+    for (const child of node) collectVisibleText(child, out);
+    return out;
+  }
+  if (typeof node === "object" && node.__vnode) {
+    const ariaLabel = node.props && node.props["aria-label"];
+    if (typeof ariaLabel === "string") out.push(ariaLabel);
+    for (const child of node.children) collectVisibleText(child, out);
+  }
+  return out;
+}
+
+/** Text visible inside the quota card only (so assertions never match the model list). */
+function quotaCardText(rt) {
+  const card = rt.nodes.find((node) => node.props && node.props.className === "dsha-quota-section");
+  assert.ok(card, "the quota card must render");
+  return collectVisibleText(card).join(" \u0000 ");
+}
+
+/** The `.dsha-group-title` texts, in render order. */
+function collectGroupTitles(rt) {
+  return rt.nodes
+    .filter((node) => node.props.className === "dsha-group-title")
+    .map((node) => node.children.filter((child) => typeof child === "string").join(""));
+}
+
 /** Load client.js, apply() it, and return a mount() helper that runs effects + re-renders. */
-function loadClient({ statusPayload, quotaPayload, requests, requestHandler }) {
+function loadClient({ statusPayload, quotaPayload, requests, requestHandler, locale = "zh" }) {
   const source = loadGeminiSource();
   const rt = createReactRuntime();
   const { document } = makeDomStub();
@@ -223,7 +256,7 @@ function loadClient({ statusPayload, quotaPayload, requests, requestHandler }) {
       inject: (n, fn) => fn(),
       register: (meta, render) => { sectionRender = render; return () => {}; },
     },
-    locale: { register() {}, subscribe: () => () => {}, bind: () => (k) => k, getLocale: () => ({ active: "zh" }) },
+    locale: { register() {}, subscribe: () => () => {}, bind: () => (k) => k, getLocale: () => ({ active: locale }) },
     effect(fn) { fn(); },
     on() {},
   });
@@ -292,9 +325,10 @@ test("quota rows render from real quota groups", async () => {
   assert.ok(/\d+%/.test(text) || /Claude|Gemini|GPT/i.test(text), "quota content must render");
 });
 
-test("model-specific quota groups render their model name instead of a generic heading", async () => {
-  // Regression:「Gemini 4 Argon」分组曾被 /gemini/i 折叠成通用 “Gemini 模型”，卡片里
-  // 出现两个同名分组，Argon 进度条也只剩 “每周额度剩余”——用户看不出它对应哪个模型。
+test("Gemini 4 quota groups render the localized label instead of the backend codename", async () => {
+  // 用户要求：额度显示里的 “Gemini 4 Argon” 改为 “Gemini 4 模型”。该分组由后端
+  // displayName 命名，必须在标题、进度条行标签与 aria-label 三处都换成本地化
+  // 名称，额度卡片里不能再残留后端代号。
   const { mount, rt } = loadClient({ statusPayload: STATUS_FIXTURE, quotaPayload: STATUS_FIXTURE, requests: [] });
   const text = await mount();
 
@@ -302,34 +336,33 @@ test("model-specific quota groups render their model name instead of a generic h
   const argonGroup = (quota.groups || []).find((group) => group.displayName === "Gemini 4 Argon");
   assert.ok(argonGroup, "fixture must carry the live Gemini 4 Argon group shape");
 
-  const groupTitles = rt.nodes
-    .filter((node) => node.props.className === "dsha-group-title")
-    .map((node) => node.children.filter((child) => typeof child === "string").join(""));
+  const titles = collectGroupTitles(rt);
 
-  // (a) 具体模型分组：标题与行标签都带模型名（行标签 = 模型名 · 窗口文案）。
-  assert.ok(groupTitles.includes("Gemini 4 Argon"), `group titles: ${JSON.stringify(groupTitles)}`);
-  assert.match(text, /Gemini 4 Argon/, "the model-specific group must render its displayName verbatim");
-  assert.match(text, /Gemini 4 Argon · 每周额度剩余/, "the Argon bar label must carry its model name");
+  // (a) Gemini 4 系列具体模型分组：标题折成本地化 “Gemini 4 模型”，
+  // 行标签 = 本地化模型名 · 窗口文案。
+  assert.ok(titles.includes("Gemini 4 模型"), `group titles: ${JSON.stringify(titles)}`);
+  assert.ok(!titles.includes("Gemini 4 Argon"), "backend codename must not stay as a group heading");
+  assert.match(text, /Gemini 4 模型 · 每周额度剩余/, "the Gemini 4 bar label must carry the localized model name");
   const argonBar = rt.nodes.find(
     (node) => node.props.role === "progressbar"
-      && String(node.props["aria-label"] || "").includes("Gemini 4 Argon"),
+      && String(node.props["aria-label"] || "").includes("Gemini 4 模型"),
   );
-  assert.ok(argonBar, "the Argon progressbar must name its model in aria-label");
+  assert.ok(argonBar, "the Gemini 4 progressbar must use the localized name in aria-label");
   assert.match(argonBar.props["aria-label"], /每周额度剩余/);
+  assert.doesNotMatch(String(argonBar.props["aria-label"]), /Gemini 4 Argon/);
 
-  // (b) 平台级分组仍走本地化通用名。
-  assert.equal(groupTitles.filter((title) => title === "Gemini 模型").length, 1);
-  assert.equal(groupTitles.filter((title) => title === "Claude 与 GPT 模型").length, 1);
+  // (b) 整个额度卡片（标题 + 行标签 + aria-label）不再出现后端代号。
+  const cardText = quotaCardText(rt);
+  assert.match(cardText, /Gemini 4 模型/);
+  assert.doesNotMatch(cardText, /Gemini 4 Argon/, "no visible Gemini 4 Argon string may remain in the quota card");
 
-  // (c) “Gemini 模型” 只有一份：具体模型分组不再被折叠成与它同名的第二份标题。
-  assert.equal(
-    groupTitles.filter((title) => title === "Gemini 模型").length,
-    1,
-    `generic Gemini heading must appear once, got: ${JSON.stringify(groupTitles)}`,
-  );
-  assert.equal(groupTitles.filter((title) => /argon/i.test(title)).length, 1);
+  // (c) 平台级分组仍走本地化通用名，各只有一份；具体模型分组不再与 “Gemini 模型”
+  // 同名，也不会以旧代号出现。
+  assert.equal(titles.filter((title) => title === "Gemini 模型").length, 1);
+  assert.equal(titles.filter((title) => title === "Claude 与 GPT 模型").length, 1);
+  assert.equal(titles.filter((title) => /argon/i.test(title)).length, 0);
 
-  // (d) 百分比照常渲染：fixture 里 Argon 剩余 0。
+  // (d) 百分比照常渲染：fixture 里 Gemini 4 剩余 0。
   assert.equal(argonBar.props["aria-valuenow"], 0);
   assert.match(argonBar.props["aria-label"], /: 0%/);
   assert.match(text, /(?:^|[^\d])0%/);
@@ -359,6 +392,63 @@ test("future model-specific groups stay verbatim and keep Claude/GPT cyan stylin
   assert.equal(rt.nodes.filter((node) => node.props.className === "dsha-fill-cyan").length, 1);
 });
 
+test("future Gemini 4 family groups also render the localized label", async () => {
+  // 后端将来若换成别的代号（如 “Gemini 4 Carbon”），也必须继续折成
+  // “Gemini 4 模型”，而不是只对 “Gemini 4 Argon” 特判。
+  const fixture = structuredClone(STATUS_FIXTURE);
+  const quota = fixture.accounts[0].quota;
+  quota.groups = [
+    {
+      displayName: "Gemini 4 Carbon",
+      buckets: [{ displayName: "Gemini 4 Carbon Weekly Limit", remainingFraction: 0.25 }],
+    },
+    {
+      // 窗口文案没被每周/5 小时规则识别、原样回退时，同样不能漏出后端代号。
+      displayName: "Gemini 4 Carbon",
+      buckets: [{ displayName: "Gemini 4 Carbon", remainingFraction: 0.5 }],
+    },
+  ];
+  const { mount, rt } = loadClient({ statusPayload: fixture, quotaPayload: fixture, requests: [] });
+  const text = await mount();
+
+  assert.deepEqual(collectGroupTitles(rt), ["Gemini 4 模型", "Gemini 4 模型"]);
+  assert.match(text, /Gemini 4 模型 · 每周额度剩余/);
+  assert.match(text, /Gemini 4 模型 · 额度限制/);
+  assert.doesNotMatch(quotaCardText(rt), /Gemini 4 Carbon/);
+});
+
+test("English locale renders the localized Gemini 4 Models label", async () => {
+  // en 字典同样要覆盖：标题 “Gemini 4 Models”，行标签带 “Weekly Limit Remaining”，
+  // 且额度卡片里不能残留后端代号。
+  const { mount, rt } = loadClient({
+    statusPayload: STATUS_FIXTURE,
+    quotaPayload: STATUS_FIXTURE,
+    requests: [],
+    locale: "en",
+  });
+  const text = await mount();
+
+  const titles = collectGroupTitles(rt);
+  assert.ok(titles.includes("Gemini 4 Models"), `group titles: ${JSON.stringify(titles)}`);
+  assert.equal(titles.filter((title) => title === "Gemini 4 Models").length, 1);
+  assert.match(text, /Gemini 4 Models · Weekly Limit Remaining/);
+
+  const argonBar = rt.nodes.find(
+    (node) => node.props.role === "progressbar"
+      && String(node.props["aria-label"] || "").includes("Gemini 4 Models"),
+  );
+  assert.ok(argonBar, "the en progressbar must use the localized name in aria-label");
+  assert.doesNotMatch(String(argonBar.props["aria-label"]), /Gemini 4 Argon/);
+
+  const cardText = quotaCardText(rt);
+  assert.match(cardText, /Gemini 4 Models/);
+  assert.doesNotMatch(cardText, /Gemini 4 Argon/, "no visible Gemini 4 Argon string may remain in the en quota card");
+
+  // en 通用分组照旧各只有一份。
+  assert.equal(titles.filter((title) => title === "Gemini Models").length, 1);
+  assert.equal(titles.filter((title) => title === "Claude and GPT models").length, 1);
+});
+
 test("model list renders and marks enabled models", async () => {
   const requests = [];
   const { mount } = loadClient({ statusPayload: STATUS_FIXTURE, quotaPayload: STATUS_FIXTURE, requests });
@@ -367,6 +457,43 @@ test("model list renders and marks enabled models", async () => {
   const options = STATUS_FIXTURE.models.options;
   assert.ok(options.length > 0, "fixture must list models");
   assert.match(text, /gemini-3\.8-flash/, "model ids must render in the model list");
+});
+
+test("an unavailable model shows the backend's own reason in the badge tooltip", async () => {
+  // 「Gemini 4 Carbon」是 Ultra 专属：Pro 账号的实时目录只通告 disabled 占位实体，
+  // 目录因此把它标为不可用。卡片仍要显示该模型（用户能知道后端有它），
+  // tooltip 解释为什么本账号用不了；没有后端原因时退回通用文案。
+  const fixture = structuredClone(STATUS_FIXTURE);
+  fixture.models.options = [
+    {
+      id: "gemini-4-carbon",
+      name: "Gemini 4 Carbon",
+      inputModalities: ["text", "image"],
+      reasoningEfforts: ["low", "medium", "high"],
+      enabled: false,
+      available: false,
+      unavailableReason: "Gemini 4 Carbon is currently available to Ultra plan subscribers.",
+    },
+    {
+      id: "gemini-4-argon",
+      name: "Gemini 4 Argon",
+      inputModalities: ["text", "image"],
+      reasoningEfforts: ["low", "medium", "high"],
+      enabled: false,
+      available: false,
+    },
+  ];
+  const { mount, rt } = loadClient({ statusPayload: fixture, quotaPayload: fixture, requests: [] });
+  await mount();
+
+  const titles = rt.nodes
+    .filter((node) => node.props.className === "dsha-badge-unavailable")
+    .map((node) => String(node.props.title))
+    .sort();
+  assert.deepEqual(titles, [
+    "Gemini 4 Carbon is currently available to Ultra plan subscribers.",
+    "gemini-4-argon not available on this account",
+  ], "the backend tagDescription becomes the tooltip; a model without one keeps the generic tooltip");
 });
 
 test("image generation choices and badges exclude models that only read images", async () => {

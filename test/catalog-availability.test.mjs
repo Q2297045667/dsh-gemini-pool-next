@@ -1,12 +1,31 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseCatalogModels } from "../lib/index.js";
+import { isUsableRuntimeModelId, parseCatalogModels } from "../lib/index.js";
 
 function modelsPayload(entries) {
   const models = {};
   for (const [id, info] of Object.entries(entries)) models[id] = info;
   return { models };
 }
+
+/** The disabled placeholder the sandbox endpoint serves on a Pro account. */
+const CARBON_DISABLED = {
+  displayName: "Gemini 4 Carbon",
+  supportsImages: true,
+  supportsThinking: true,
+  minThinkingBudget: 128,
+  recommended: true,
+  maxTokens: 1048576,
+  maxOutputTokens: 262144,
+  disabled: true,
+  model: "MODEL_PLACEHOLDER_M670",
+  apiProvider: "API_PROVIDER_GOOGLE_GEMINI",
+  modelProvider: "MODEL_PROVIDER_GOOGLE",
+  supportsVideo: true,
+  tagTitle: "Unavailable",
+  tagDescription: "Gemini 4 Carbon is currently available to Ultra plan subscribers.",
+  thinkingLevel: 2,
+};
 
 test("a base model with a matching backend entity is available with its quota", () => {
   const catalog = parseCatalogModels(modelsPayload({
@@ -81,4 +100,94 @@ test("internal and chat_ entities are ignored", () => {
   }));
   const raw = catalog.find((m) => m.id === "chat_ultra_secret" || m.id === "gemini-4-argon-high");
   assert.equal(raw, undefined);
+});
+
+test("a disabled placeholder yields an unavailable Carbon entry with the backend reason", () => {
+  const catalog = parseCatalogModels(modelsPayload({
+    "gemini-3.8-flash-low": { displayName: "Gemini 3.8 Flash (Low)" },
+    "gemini-4-argon-high": { displayName: "Gemini 4 Argon (High)", quotaInfo: { remainingFraction: 0.4 } },
+    "gemini-4-carbon-disabled": CARBON_DISABLED,
+  }));
+  const byId = new Map(catalog.map((model) => [model.id, model]));
+
+  // The placeholder is not a catalog model of its own.
+  assert.equal(byId.get("gemini-4-carbon-disabled"), undefined);
+  assert.ok(!catalog.some((model) => model.id.includes("-disabled")), "no disabled entity may become a catalog model");
+
+  // The consolidated public model stays visible but unavailable.
+  const carbon = byId.get("gemini-4-carbon");
+  assert.ok(carbon, "the consolidated Gemini 4 Carbon entry must stay in the catalog");
+  assert.equal(carbon.available, false);
+  assert.equal(carbon.remainingFraction, undefined);
+  assert.equal(carbon.unavailableReason, "Gemini 4 Carbon is currently available to Ultra plan subscribers.");
+  assert.equal(carbon.contextWindow, 1048576);
+  assert.equal(carbon.maxTokens, 262144);
+  assert.deepEqual(carbon.reasoningEfforts, ["low", "medium", "high"]);
+  assert.match(carbon.description, /Ultra/i);
+
+  // Every other model keeps its own availability untouched.
+  assert.equal(byId.get("gemini-4-argon").available, true);
+  assert.equal(byId.get("gemini-4-argon").remainingFraction, 0.4);
+  assert.equal(byId.get("gemini-3.8-flash").available, true);
+  assert.equal(byId.get("gemini-3.5-flash").available, false);
+});
+
+test("non-disabled carbon entities make Carbon available and pin its levels", () => {
+  const catalog = parseCatalogModels(modelsPayload({
+    "gemini-4-carbon-low": { displayName: "Gemini 4 Carbon (Low)" },
+    "gemini-4-carbon-medium": { displayName: "Gemini 4 Carbon (Medium)", quotaInfo: { remainingFraction: 0.55 } },
+    "gemini-4-carbon-high": { displayName: "Gemini 4 Carbon (High)" },
+  }));
+  const byId = new Map(catalog.map((model) => [model.id, model]));
+  const carbon = byId.get("gemini-4-carbon");
+  assert.equal(carbon.available, true);
+  assert.equal(carbon.remainingFraction, 0.55);
+  assert.deepEqual(carbon.reasoningEfforts, ["low", "medium", "high"]);
+  assert.equal(carbon.unavailableReason, undefined);
+  // The per-level entities are matched into the base model, never raw rows.
+  assert.deepEqual(catalog.filter((model) => model.id.startsWith("gemini-4-carbon-")).map((model) => model.id), []);
+});
+
+test("tagTitle 'Unavailable' alone keeps an entity out of the catalog", () => {
+  const catalog = parseCatalogModels(modelsPayload({
+    "gemini-3.8-flash-low": { displayName: "Gemini 3.8 Flash (Low)" },
+    "gemini-4-carbon-high": {
+      displayName: "Gemini 4 Carbon (High)",
+      tagTitle: "Unavailable",
+      tagDescription: "Ultra only.",
+    },
+  }));
+  const byId = new Map(catalog.map((model) => [model.id, model]));
+  assert.equal(byId.get("gemini-4-carbon-high"), undefined);
+  const carbon = byId.get("gemini-4-carbon");
+  assert.equal(carbon.available, false);
+  assert.equal(carbon.unavailableReason, "Ultra only.");
+});
+
+test("infoRaw.disabled on a level entity is not availability evidence", () => {
+  const catalog = parseCatalogModels(modelsPayload({
+    "gemini-4-carbon-high": { displayName: "Gemini 4 Carbon (High)", disabled: true },
+  }));
+  const carbon = catalog.find((model) => model.id === "gemini-4-carbon");
+  assert.equal(carbon.available, false);
+  assert.ok(!catalog.some((model) => model.id === "gemini-4-carbon-high"));
+});
+
+test("a disabled entity without a public base never leaks as a raw model", () => {
+  const catalog = parseCatalogModels(modelsPayload({
+    "gemini-5-orion-disabled": { displayName: "Gemini 5 Orion", disabled: true },
+    "gemini-3.8-flash-low": {},
+  }));
+  assert.ok(!catalog.some((model) => model.id.includes("disabled")));
+});
+
+test("isUsableRuntimeModelId rejects disabled placeholders and keeps normal entities", () => {
+  assert.equal(isUsableRuntimeModelId("gemini-4-carbon-disabled"), false);
+  assert.equal(isUsableRuntimeModelId("gemini-4-carbon"), true);
+  assert.equal(isUsableRuntimeModelId("gemini-4-carbon-high"), true);
+  assert.equal(isUsableRuntimeModelId("claude-opus-5-5-high"), true);
+  assert.equal(isUsableRuntimeModelId("gpt-oss-120b-medium"), true);
+  assert.equal(isUsableRuntimeModelId("MODEL_PLACEHOLDER_M670"), false);
+  assert.equal(isUsableRuntimeModelId("chat_20706"), false);
+  assert.equal(isUsableRuntimeModelId("has whitespace"), false);
 });

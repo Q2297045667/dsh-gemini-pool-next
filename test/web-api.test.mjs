@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
-import { FileModelSettingsStore, registerWebApi } from "../lib/index.js";
+import { FileModelSettingsStore, parseCatalogModels, registerWebApi } from "../lib/index.js";
 import { AccountPoolManager } from "../lib/pool.js";
 
 const ACCESS_TOKEN = "ya29.fake-web-api-access-token";
@@ -110,6 +110,66 @@ test("status and model settings expose usable state without account credentials"
   assert.equal(models.body.value.options.find((model) => model.id === "gemini-4-argon").enabled, false);
   assert.deepEqual((await new FileModelSettingsStore(api.settingsFile).read()).enabledModelIds, enabledModelIds);
   assert.ok(api.events.includes("llm/adapters-updated"));
+});
+
+test("the model API explains unavailable Carbon and never lists the disabled entity", async (t) => {
+  const api = await createApi(t);
+  await api.settings.setCatalogModels(parseCatalogModels({
+    models: {
+      "gemini-3.8-flash-low": { displayName: "Gemini 3.8 Flash (Low)" },
+      "gemini-4-carbon-disabled": {
+        displayName: "Gemini 4 Carbon",
+        supportsImages: true,
+        supportsThinking: true,
+        maxTokens: 1048576,
+        maxOutputTokens: 262144,
+        disabled: true,
+        tagTitle: "Unavailable",
+        tagDescription: "Gemini 4 Carbon is currently available to Ultra plan subscribers.",
+        thinkingLevel: 2,
+      },
+    },
+  }));
+  const models = (await api.request("models")).body.value;
+  const carbon = models.options.find((model) => model.id === "gemini-4-carbon");
+  assert.ok(carbon, "Carbon stays listed so the card can explain why it is unavailable");
+  assert.equal(carbon.available, false);
+  assert.equal(carbon.enabled, false);
+  assert.match(carbon.unavailableReason, /Ultra plan subscribers/);
+  assert.match(carbon.description, /Ultra/i);
+  assert.equal(models.options.some((model) => model.id.includes("-disabled")), false);
+  assert.equal(models.enabledModelIds.includes("gemini-4-carbon"), false);
+  assert.equal(models.enabledModelIds.includes("gemini-4-carbon-disabled"), false);
+  // Other models keep displaying normally.
+  assert.equal(models.options.find((model) => model.id === "gemini-4-argon").available, false);
+  assert.equal(models.options.find((model) => model.id === "gemini-3.8-flash").available, true);
+});
+
+test("a catalog saved with the raw disabled id never exposes it as a selectable model", async (t) => {
+  const api = await createApi(t);
+  // Exactly what the buggy version persisted before the fix.
+  await api.settings.setCatalogModels([
+    {
+      id: "gemini-4-carbon-disabled",
+      name: "Gemini 4 Carbon",
+      inputModalities: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      reasoningEfforts: ["low", "medium", "high"],
+      available: true,
+    },
+  ]);
+  await api.settings.setEnabledModelIds(["gemini-4-carbon-disabled"]);
+  const models = (await api.request("models")).body.value;
+  assert.equal(models.options.some((model) => model.id === "gemini-4-carbon-disabled"), false);
+  assert.equal(models.enabledModelIds.includes("gemini-4-carbon-disabled"), false);
+  // The picker falls back to the static catalog when the stored one was only
+  // the stale placeholder, and the residual selection is not exposed as usable.
+  const carbon = models.options.find((model) => model.id === "gemini-4-carbon");
+  assert.ok(carbon);
+  assert.equal(carbon.available, false);
+  assert.equal(models.options.find((model) => model.id === "gemini-4-carbon-disabled"), undefined);
+  assertNoTokens(await api.request());
 });
 
 test("config, primary selection, enable, removal, and logout persist across reload", async (t) => {

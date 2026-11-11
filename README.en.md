@@ -208,6 +208,7 @@ Tick a model in Settings to enable it. Enabled models float to the top, each sho
 | Model | Thinking levels | Quota pool |
 |---|---|---|
 | **Gemini 4 Argon** (Pro flagship) | Low / Medium / High | Gemini 4 Argon (separate Pro quota; folded into the main Gemini pool on Ultra) |
+| **Gemini 4 Carbon** (Ultra only) | Low / Medium / High | Gemini 4 Argon bucket; on Pro accounts the backend only advertises a disabled placeholder, so the catalog marks it unavailable |
 | Gemini 3.8 Flash | Minimal / Low / Medium / High | Gemini |
 | Gemini 3.5 Flash Lite · Gemini 3.1 Flash Lite · Gemini 2.5 Flash Lite | — | Gemini |
 | Gemini 3.1 Flash Image (image gen) | — | Gemini |
@@ -217,9 +218,11 @@ Tick a model in Settings to enable it. Enabled models float to the top, each sho
 
 Models in the same pool share the weekly and 5-hour quotas. Quota drains in proportion to token cost, so heavier models run out faster.
 
-The quota bars in Settings follow the backend's own quota groups: platform-level groups (Gemini, Claude & GPT) keep their localized umbrella label, while a group the backend splits out per model — **Gemini 4 Argon** on Pro plans is exactly that, with a single weekly bucket — is titled and labelled with that model name. So "Gemini 4 Argon · Weekly Limit Remaining" is unambiguous next to the main Gemini pool's weekly bar.
+The quota bars in Settings follow the backend's own quota groups: platform-level groups (Gemini, Claude & GPT) keep their localized umbrella label, while a group the backend splits out per model is shown under a localized model name — on Pro plans the Gemini 4 bucket (backend displayName `Gemini 4 Argon`, a single weekly bucket) renders as **Gemini 4 Models** with the bar labelled "Gemini 4 Models · Weekly Limit Remaining". It stays unambiguous next to the main Gemini pool's weekly bar, and the backend codename is never shown to the user.
 
 **The backend gates the catalog on the client fingerprint (User-Agent).** Measured on one Pro account: the outdated `antigravity/1.15.8 linux/amd64` fingerprint returns 16 entities with **no Gemini 4 Argon and no per-level Gemini 3.8**; the current `antigravity/hub/2.24.0 (aidev_client; os_type=…; arch=…; cl=1000335682)` fingerprint returns 22 entities including `gemini-4-argon-low/medium/high` and `gemini-3.8-flash-low/medium/high`. The plugin sends the current fingerprint by default (`ANTIGRAVITY_USER_AGENT` overrides it) and re-discovers the catalog on startup whenever an upgrade changes that fingerprint.
+
+**The backend also lists models the current plan cannot use.** Gemini 4 Carbon is Ultra-only today: a Pro account's `fetchAvailableModels` advertises only a `gemini-4-carbon-disabled` placeholder (`disabled: true`, `tagTitle: "Unavailable"`, and a `tagDescription` saying it is available to Ultra subscribers). The plugin treats such disabled entities as non-evidence — they never become selectable models, are never auto-enabled and are never sent as runtime entities; Settings shows the model as "Unavailable" with the backend reason in the badge tooltip. Once an account advertises usable `gemini-4-carbon-low/medium/high` entities, the model turns available and routes per level (262144 output ceiling).
 
 **Availability and thinking levels follow the backend entities the account really advertises.** After sign-in the plugin reads that account's `fetchAvailableModels` catalog and enables only the entities it serves; a model the account does not advertise shows the "unavailable on this account" badge and is not enabled. A session that still selects one of those models is served by the best available model in the pool instead of sending a request for an entity the backend never advertised — which is exactly what produced `Requested entity was not found` (404).
 

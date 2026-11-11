@@ -49,6 +49,21 @@ function stubCatalogFetch(t, catalogs) {
   });
 }
 
+/** The disabled placeholder the sandbox endpoint serves on a Pro account. */
+const CARBON_DISABLED = {
+  displayName: "Gemini 4 Carbon",
+  supportsImages: true,
+  supportsThinking: true,
+  minThinkingBudget: 128,
+  recommended: true,
+  maxTokens: 1048576,
+  maxOutputTokens: 262144,
+  disabled: true,
+  tagTitle: "Unavailable",
+  tagDescription: "Gemini 4 Carbon is currently available to Ultra plan subscribers.",
+  thinkingLevel: 2,
+};
+
 function apiHandler(pool, settings) {
   let handler;
   const webCtx = {
@@ -204,4 +219,105 @@ test("status API restores static model metadata for catalogs saved by earlier ve
   assert.equal(model.deprecated, true);
   assert.match(model.description, /2026-11-18/);
   assert.equal(model.available, false);
+});
+
+test("a disabled carbon placeholder never becomes a quota, catalog or enabled model", async (t) => {
+  const { pool, settings, addAccount } = await setup(t);
+  const account = await addAccount("pro");
+  stubCatalogFetch(t, {
+    pro: { "gemini-3.8-flash-low": {}, "gemini-4-carbon-disabled": CARBON_DISABLED },
+  });
+  const quota = await fetchQuotaForAccount(account, pool, settings);
+
+  // The quota-row list (CLI / status) never lists the disabled entity.
+  assert.ok(!quota.models.some((model) => model.modelId === "gemini-4-carbon-disabled"));
+
+  const stored = await settings.read();
+  const catalog = new Map(stored.catalogModels.map((model) => [model.id, model]));
+  assert.equal(catalog.has("gemini-4-carbon-disabled"), false);
+  const carbon = catalog.get("gemini-4-carbon");
+  assert.equal(carbon.available, false);
+  assert.equal(carbon.unavailableReason, "Gemini 4 Carbon is currently available to Ultra plan subscribers.");
+  assert.equal(carbon.maxTokens, 262144);
+  assert.equal(carbon.contextWindow, 1048576);
+  assert.deepEqual(carbon.reasoningEfforts, ["low", "medium", "high"]);
+  // First discovery enables only what this Pro account really serves.
+  assert.deepEqual(stored.enabledModelIds, ["gemini-3.8-flash"]);
+
+  // The settings card sees it as unavailable, with the backend reason.
+  const status = await apiHandler(pool, settings)();
+  const carbonOption = status.models.options.find((option) => option.id === "gemini-4-carbon");
+  assert.equal(carbonOption.available, false);
+  assert.equal(carbonOption.enabled, false);
+  assert.match(carbonOption.unavailableReason, /Ultra plan subscribers/);
+  assert.equal(status.models.options.some((option) => option.id.includes("-disabled")), false);
+});
+
+test("a refresh prunes the stale disabled id and keeps unavailable carbon unchecked", async (t) => {
+  const { pool, settings, addAccount } = await setup(t);
+  const account = await addAccount("pro");
+  // Settings persisted by the buggy version: the raw placeholder was a model
+  // (available: true) and the user's enabled set named it.
+  await settings.setCatalogModels([
+    { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", available: true },
+    {
+      id: "gemini-4-carbon-disabled",
+      name: "Gemini 4 Carbon",
+      inputModalities: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      reasoningEfforts: ["low", "medium", "high"],
+      available: true,
+    },
+  ]);
+  await settings.setEnabledModelIds(["gemini-3.8-flash", "gemini-4-carbon-disabled", "gemini-4-carbon"]);
+
+  stubCatalogFetch(t, {
+    pro: { "gemini-3.8-flash-low": {}, "gemini-4-carbon-disabled": CARBON_DISABLED },
+  });
+  await fetchQuotaForAccount(account, pool, settings);
+
+  const stored = await settings.read();
+  assert.deepEqual(stored.enabledModelIds, ["gemini-3.8-flash"]);
+  assert.equal(stored.catalogModels.some((model) => model.id === "gemini-4-carbon-disabled"), false);
+  const carbon = stored.catalogModels.find((model) => model.id === "gemini-4-carbon");
+  assert.equal(carbon.available, false);
+  assert.equal(stored.enabledModelIds.includes("gemini-4-carbon"), false);
+});
+
+test("a payload with only the disabled carbon placeholder enables nothing", async (t) => {
+  const { pool, settings, addAccount } = await setup(t);
+  const account = await addAccount("pro");
+  stubCatalogFetch(t, { pro: { "gemini-4-carbon-disabled": CARBON_DISABLED } });
+  const quota = await fetchQuotaForAccount(account, pool, settings);
+
+  // The disabled entity is not a quota row and not availability evidence.
+  assert.deepEqual(quota.models, []);
+  const stored = await settings.read();
+  assert.deepEqual(stored.enabledModelIds, []);
+  const carbon = stored.catalogModels.find((model) => model.id === "gemini-4-carbon");
+  assert.equal(carbon.available, false);
+  assert.match(carbon.unavailableReason, /Ultra plan subscribers/);
+  assert.equal(stored.catalogModels.some((model) => model.id === "gemini-4-carbon-disabled"), false);
+});
+
+test("an Ultra account that serves carbon entities gets Carbon enabled and routable", async (t) => {
+  const { pool, settings, addAccount } = await setup(t);
+  const account = await addAccount("ultra");
+  stubCatalogFetch(t, {
+    ultra: {
+      "gemini-4-carbon-low": { displayName: "Gemini 4 Carbon (Low)", maxTokens: 1048576, maxOutputTokens: 262144 },
+      "gemini-4-carbon-medium": { displayName: "Gemini 4 Carbon (Medium)", maxTokens: 1048576, maxOutputTokens: 262144 },
+      "gemini-4-carbon-high": { displayName: "Gemini 4 Carbon (High)", maxTokens: 1048576, maxOutputTokens: 262144 },
+    },
+  });
+  await fetchQuotaForAccount(account, pool, settings);
+
+  const stored = await settings.read();
+  const carbon = stored.catalogModels.find((model) => model.id === "gemini-4-carbon");
+  assert.equal(carbon.available, true);
+  assert.deepEqual(carbon.reasoningEfforts, ["low", "medium", "high"]);
+  assert.ok(stored.enabledModelIds.includes("gemini-4-carbon"));
+  // Per-level entities are folded into the base model, never raw rows.
+  assert.equal(stored.catalogModels.some((model) => model.id.startsWith("gemini-4-carbon-")), false);
 });
