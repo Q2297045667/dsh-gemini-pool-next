@@ -171,6 +171,8 @@ HTTPS_PROXY=http://127.0.0.1:7897
 
 凭证存储在 `$DSH_HOME/storages/antigravity-pool-accounts.json`（桌面版为 `%APPDATA%\dsh-desktop\harness\storages\...`），包含 access 与 refresh token，请妥善保管。旧版单账号凭证升级时自动迁移，无需重新登录。
 
+与上游插件 `dsh-gemini-pool` 共存时（见下文「与上游插件共存」），本插件改用 `antigravity-pool-next-accounts.json` / `antigravity-pool-next-settings.json` / `antigravity-pool-next-oauth.json`，首次共存启动会从旧文件一次性复制，不会覆盖已有文件。
+
 ## 🧊 冷却与自愈
 
 账号遇到 429 后自动进入指数退避冷却。连续失败达到阈值时，插件禁用该账号并转入后台探活。额度恢复后账号自动回归，全程无需人工干预。
@@ -195,11 +197,36 @@ HTTPS_PROXY=http://127.0.0.1:7897
 - **默认开启**。关闭方式任选其一：
   - 设置环境变量 `ANTIGRAVITY_VISION_ENABLED=false`
   - 在设置页「视觉旁路」卡片一键关闭
-  - 经 `/antigravity/api/config` 在 accounts.json 里配置 `visionEnabled: false`
+  - 经 `/antigravity-pool-next/api/config` 在 accounts.json 里配置 `visionEnabled: false`
 
   开关同时控制贴图准入与自动转述；关闭后，贴图行为恢复宿主原样。`visionModel` 指定代看模型；留空则自动挑选，设置页卡片可直接选择。
 - **已知依赖**：自动转述依赖宿主 `agent/pre-step` 事件、贴图准入依赖 `resolveModelInfo` 行为，宿主大版本升级后若贴图行为异常，需重审本节（当前在 DSH 0.2.2-rc.1 验证）。
 - **排障**：贴图后模型仍收到占位文本时，先运行 `/antigravity-doctor`，查看 `visionBridge` / `visionShim` 两行。两行显示 `registered` + `installed` 即为正常。服务端日志里，`[Antigravity Pool Vision]` 前缀的行记录桥的每一步判定（请求进入、模型判定、改写结果或放行原因）。贴图后一条前缀行都没有，说明事件没有到达桥。
+
+## 🤝 与上游插件共存
+
+如果你同时装了上游的 `dsh-gemini-pool`（或它的其它发行版），两个插件会都想注册 provider `antigravity`、都要占用 `/antigravity/api` 路由、都往 `storages/antigravity-*.json` 写数据——DSH 只允许一个适配器占用一个 provider，另一家会在启动时报 `an adapter for provider "antigravity" is already registered` 并整个加载失败。
+
+本插件为此内置了「共存模式」，装上游插件时什么都不用配：
+
+| 冲突点 | 上游 `dsh-gemini-pool` | 本插件（共存时） |
+|---|---|---|
+| provider id | `antigravity` | **`antigravity-pool`**（模型选择器里显示为 **Antigravity Pool**） |
+| Web API 路由 | `/antigravity/api` | **`/antigravity-pool-next/api`** |
+| 账号 / 设置 / 凭证 | `antigravity-pool-accounts.json` 等 | **`antigravity-pool-next-*.json`**（首次启动从旧文件复制一次，不覆盖） |
+| OAuth 回调端口 | 51121 | **51122**（`ANTIGRAVITY_CALLBACK_PORT` 仍可覆盖） |
+| 设置页入口 | Antigravity | **Antigravity Pool**（另一个入口，互不遮挡） |
+
+所以两个插件会同时加载、各自可用：想用本插件的池（Gemini 4 Argon / 3.8、Claude 5.5、GPT-OSS、生图与视觉桥）就在模型里选 **Antigravity Pool** 下的模型；想用上游的就在 **Antigravity** 下选。
+
+**默认模型要指向本插件的 provider**：本插件自己的 profile 补丁已把 `agent-default-model` 的 `provider` 写成 `antigravity-pool`。如果你是从旧版本升级上来、默认模型仍写着 `provider: antigravity`，会落到上游插件（它可能没有 Gemini 4 Argon 等新模型），请改 `~/.dsh/profiles/web/cordis.patch.yml` 里的 `agent-default-model` 段，或直接在设置页重选模型。
+
+**决策是确定性的**：插件加载顺序在 DSH 里是并发竞速的，只看「provider 是否已被注册」会漏判，所以本插件还会读 loader 的 entry 列表——只要配置里存在启用的 `dsh-gemini-pool` 就先让位；你也可以用环境变量或插件 config 强制指定：`ANTIGRAVITY_PROVIDER_ID` / `ANTIGRAVITY_COEXIST_PROVIDER_ID` / `ANTIGRAVITY_PROVIDER_NAME`（对应 config 键 `providerId` / `coexistProviderId` / `providerName`）。启动日志会打印一行 `[Antigravity Pool] provider "antigravity" is already taken ... (coexist mode; decided by ...)`，`/antigravity-doctor` 也会显示 `provider=` / `coexistMode=`。
+
+**已知取舍**：
+- 两个插件各自保存一份**相同账号**的凭证副本；不要在两边同时重新登录同一个 Google 账号（refresh token 轮换后另一边的旧副本会失效），日常用量在一边登录即可。
+- `antigravity_image_generate` 工具名两边相同，先注册的那个生效；本插件独有的 `antigravity_read_image` 始终可用。
+- 命令行 `antigravity-login` 是独立进程，默认写「非共存」命名空间；共存模式下请用设置页里 Antigravity Pool 卡片的登录流程。
 
 ## 🤖 模型一览
 
@@ -247,7 +274,7 @@ flowchart LR
     VB["视觉旁路桥<br/>图片转文字"]
     TOOLS["工具集<br/>read_image · image_generate"]
   end
-  STORE[("凭证存储<br/>antigravity-pool-accounts.json")]
+  STORE[("凭证存储<br/>antigravity-pool-accounts.json<br/>(共存时: antigravity-pool-next-accounts.json)")]
   GOOGLE["Google Antigravity API"]
 
   SEL --> CORE

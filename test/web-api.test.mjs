@@ -54,13 +54,13 @@ async function createApi(t, { accountCount = 2 } = {}) {
     },
   };
   registerWebApi(ctx, pool, settings);
-  assert.equal(definition.path, "/antigravity/api");
+  assert.equal(definition.path, "/antigravity-pool-next/api");
 
   async function request(path = "status", { method = "GET", body, raw, chunks } = {}) {
     const payload = raw ?? (body === undefined ? "" : JSON.stringify(body));
     const req = Readable.from(chunks ?? (payload ? [Buffer.from(payload)] : []));
     req.method = method;
-    req.url = `/antigravity/api${path ? `/${path}` : ""}`;
+    req.url = `/antigravity-pool-next/api${path ? `/${path}` : ""}`;
     req.headers = { host: "dsh.local" };
     const result = { status: 0, headers: {}, text: "" };
     const response = {

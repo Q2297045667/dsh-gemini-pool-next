@@ -34,7 +34,7 @@ function loadGeminiSource() {
 }
 
 /** Minimal DOM good enough for installStyle() / patchNavIcon(). */
-function makeDomStub() {
+function makeDomStub(options = {}) {
   const makeEl = (tag = "div") => {
     const el = {
       tagName: String(tag).toUpperCase(),
@@ -117,7 +117,9 @@ function makeDomStub() {
     createTextNode: (t) => ({ nodeType: 3, textContent: String(t) }),
     getElementById: () => null,
     querySelector: () => null,
-    querySelectorAll: () => [],
+    // patchNavIcon() enumerates every <span>; tests can seed fake nav entries.
+    querySelectorAll: (selector) =>
+      selector === "span" && Array.isArray(options.spans) ? options.spans : [],
     addEventListener() {},
     removeEventListener() {},
   };
@@ -184,11 +186,11 @@ function renderToText(node, React, depth = 0) {
 }
 
 /** Load lib/client.js, capture the registered settings.section component, return it. */
-function loadSettingsSection() {
+function loadSettingsSection(options = {}) {
   const source = loadGeminiSource();
   const effectQueue = [];
   const React = createReactShim(effectQueue);
-  const { document, documentElement } = makeDomStub();
+  const { document, documentElement } = makeDomStub(options);
 
   let captured = null;
   const windowStub = {
@@ -268,12 +270,71 @@ function loadSettingsSection() {
 
   mod.apply(ctx);
   assert.ok(sectionRender, "apply() must register a settings.section render function");
-  assert.equal(sectionMeta.id, "antigravity", "settings section id must stay antigravity");
+  // Coexistence contract: upstream dsh-gemini-pool owns id "antigravity" /
+  // label "Antigravity", so ours must be distinguishable in the same list.
+  assert.equal(sectionMeta.name, "settings.section");
+  assert.equal(sectionMeta.id, "dsh-gemini-pool-next", "settings section id must be plugin-unique");
+  assert.equal(sectionMeta.order, 12, "settings section order must stay 12");
   assert.equal(typeof sectionMeta.label, "function");
-  assert.equal(sectionMeta.label(), "Antigravity", "section label must stay Antigravity");
+  assert.equal(sectionMeta.label(), "Antigravity Pool", "section label must stay distinguishable from upstream");
 
-  return { sectionRender, effectQueue, React, ctx, documentElement };
+  return { sectionRender, effectQueue, React, ctx, documentElement, sectionMeta };
 }
+
+test("settings section registers the unique coexist identity (id + order + label)", () => {
+  const { sectionMeta } = loadSettingsSection();
+  assert.equal(sectionMeta.name, "settings.section");
+  // Upstream registers { id: "antigravity", label: "Antigravity" }; ours must
+  // never collide with it, or the two cards/nav entries become indistinguishable.
+  assert.equal(sectionMeta.id, "dsh-gemini-pool-next");
+  assert.notEqual(sectionMeta.id, "antigravity");
+  assert.equal(sectionMeta.order, 12);
+  assert.equal(typeof sectionMeta.label, "function");
+  assert.equal(sectionMeta.label(), "Antigravity Pool");
+  assert.notEqual(sectionMeta.label(), "Antigravity");
+});
+
+/** Fake <span> nav label whose ancestor button owns an <svg> icon. */
+function makeNavSpan(label) {
+  const svg = {
+    attributes: {},
+    innerHTML: "",
+    setAttribute(k, v) {
+      this.attributes[k] = String(v);
+    },
+    getAttribute(k) {
+      return this.attributes[k];
+    },
+    querySelector: () => null,
+  };
+  const button = { querySelector: (selector) => (selector === "svg" ? svg : null) };
+  const span = {
+    textContent: label,
+    closest: (selector) => (selector === "button" ? button : null),
+  };
+  return { span, svg };
+}
+
+test("nav icon patcher styles BOTH the upstream and our own settings labels", () => {
+  // Both cards are visible in the same nav/settings list once the plugins
+  // coexist: upstream keeps "Antigravity", ours is "Antigravity Pool". The
+  // observer must style both, and must not touch unrelated entries.
+  const upstream = makeNavSpan("Antigravity");
+  const ours = makeNavSpan("Antigravity Pool");
+  const unrelated = makeNavSpan("Appearance");
+
+  // apply() runs initNavObserver() -> patchNavIcon() against this DOM.
+  loadSettingsSection({ spans: [upstream.span, ours.span, unrelated.span] });
+
+  for (const [name, entry] of [["upstream", upstream], ["ours", ours]]) {
+    assert.equal(entry.svg.attributes.viewBox, "0 0 110 110", `${name} nav icon viewBox must be rewritten`);
+    assert.equal(entry.svg.attributes.width, "16", `${name} nav icon width must be 16`);
+    assert.equal(entry.svg.attributes.height, "16", `${name} nav icon height must be 16`);
+    assert.match(entry.svg.innerHTML, /M55 10C55 34\.85 75\.15 55 100 55/, `${name} nav icon path must be the Gemini spark`);
+  }
+  assert.equal(unrelated.svg.attributes.viewBox, undefined, "unrelated nav labels must stay untouched");
+  assert.equal(unrelated.svg.innerHTML, "", "unrelated nav icons must not be overwritten");
+});
 
 test("settings section renders without throwing (regression: blank settings card)", () => {
   const { sectionRender, React } = loadSettingsSection();

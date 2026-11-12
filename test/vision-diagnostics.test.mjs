@@ -25,7 +25,7 @@ test("doctor vision lines report the pre-apply defaults before the plugin starts
 });
 
 // The README's troubleshooting section sends users to a real callable entry:
-// GET /antigravity/api/doctor returns the doctor text verbatim. This route
+// GET /antigravity-pool-next/api/doctor returns the doctor text verbatim. This route
 // was a documentation promise without an implementation until Refs #7.
 function makeResponse() {
   return {
@@ -60,7 +60,7 @@ function makeWebCtx({ rejection } = {}) {
   return webCtx;
 }
 
-test("web api registers GET /antigravity/api/doctor returning the doctor text", async () => {
+test("web api registers GET /antigravity-pool-next/api/doctor returning the doctor text", async () => {
   const webCtx = makeWebCtx();
   const ctx = { inject: (deps, cb) => cb(webCtx) };
   registerWebApi(ctx, {}, {});
@@ -68,10 +68,10 @@ test("web api registers GET /antigravity/api/doctor returning the doctor text", 
 
   assert.ok(route, "registerWebApi must register a route");
   assert.equal(route.kind, "prefix");
-  assert.equal(route.path, "/antigravity/api");
+  assert.equal(route.path, "/antigravity-pool-next/api");
 
   const response = makeResponse();
-  await route.handler({ method: "GET", url: "/antigravity/api/doctor" }, response);
+  await route.handler({ method: "GET", url: "/antigravity-pool-next/api/doctor" }, response);
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"], /application\/json/);
@@ -83,12 +83,12 @@ test("web api registers GET /antigravity/api/doctor returning the doctor text", 
 
   // Read-only fence: non-GET hits the method guard, no side effects.
   const rejected = makeResponse();
-  await route.handler({ method: "POST", url: "/antigravity/api/doctor" }, rejected);
+  await route.handler({ method: "POST", url: "/antigravity-pool-next/api/doctor" }, rejected);
   assert.equal(rejected.statusCode, 405);
   assert.equal(JSON.parse(rejected.body).error, "method-not-allowed");
 });
 
-// The /antigravity/api prefix rides the host connection admission fence
+// The /antigravity-pool-next/api prefix rides the host connection admission fence
 // (same as the host /api channel): an unauthenticated or untrusted-origin
 // request must be rejected before any route logic — no pool state, no
 // credentials, no doctor text leaks to a bare curl.
@@ -101,14 +101,14 @@ for (const rejection of [401, 403]) {
     assert.ok(route, "registerWebApi must register a route");
 
     const response = makeResponse();
-    await route.handler({ method: "GET", url: "/antigravity/api/doctor" }, response);
+    await route.handler({ method: "GET", url: "/antigravity-pool-next/api/doctor" }, response);
     assert.equal(response.statusCode, rejection);
     assert.equal(response.body, rejection === 401 ? "unauthorized" : "forbidden");
 
     // The login route (the natural "first contact" for a fresh setup) is
     // behind the same fence: no OAuth flow starts for a refused request.
     const loginResponse = makeResponse();
-    await route.handler({ method: "POST", url: "/antigravity/api/login" }, loginResponse);
+    await route.handler({ method: "POST", url: "/antigravity-pool-next/api/login" }, loginResponse);
     assert.equal(loginResponse.statusCode, rejection);
   });
 }

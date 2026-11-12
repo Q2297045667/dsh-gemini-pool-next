@@ -2,6 +2,22 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.12.0 — 2026-11-12
+
+### Added
+- **与上游插件 `dsh-gemini-pool` 共存**：DSH 每个 provider 只允许一个适配器，上游与本插件都注册 `antigravity`，后加载者会以 `an adapter for provider "antigravity" is already registered` 整体激活失败。现在本插件会自动让位：provider 改用 `antigravity-pool`（显示名 **Antigravity Pool**），Web API 永久迁到 `/antigravity-pool-next/api`（上游占用 `/antigravity/api`，宿主 webServer 对重复 prefix 路由会抛错），存储改用 `antigravity-pool-next-{accounts,settings,oauth}.json`（首次共存启动从旧文件一次性复制，`COPYFILE_EXCL` 不覆盖），OAuth 回调端口在共存模式让到 51122，设置页入口改为独立的 **Antigravity Pool**（id `dsh-gemini-pool-next`），两个插件与两个设置卡片同时可用。可用 `config.providerId` / `ANTIGRAVITY_PROVIDER_ID`（以及 `coexistProviderId` / `providerName` 对应项）显式覆盖
+  - **判定是确定性的**：DSH 的 loader 在同一个 `Promise.all` 里创建所有插件 entry，apply 顺序是竞速，`ctx.llm.listProviders()` 在本插件 apply 时可能还是空的；因此除注册表快照外还会读取 loader 的 entry 列表，只要存在启用的 `dsh-gemini-pool` entry 就先让位（显式配置 providerId 时不自动让位）。启动日志打印一行 `provider ... is already taken ... (coexist mode; decided by ...)`，`/antigravity-doctor` 增加 `providerName=` / `coexistMode=`
+  - **重名工具不再连带**：上游也注册 `antigravity_image_generate`，tools 注册表对重名抛错；现在每个工具独立守卫（共存模式先查 tools view），重名只跳过该工具，本插件独有的 `antigravity_read_image` 始终注册
+  - **旧对话的 thought_signature 继续可回放**：replay 元数据用解析后的 provider id 写入，读取时同时接受旧值 `antigravity`，升级/共存切换不会让历史工具调用的签名失效
+
+### Changed
+- **`/antigravity/api/*` 改为 `/antigravity-pool-next/api/*`**：客户端 bundle 与 `scripts/build-status-fixture.mjs` 同步；与上游插件同装时两个前缀各归各，互不覆盖。`webStatus` 顶层新增 `provider` / `providerName`，设置页标题下显示当前 provider id（「提供方（provider）: antigravity-pool」），便于区分两个 provider
+- 设置卡片/card 导航图标逻辑同时匹配 "Antigravity" 与 "Antigravity Pool"，两个入口都有自己的图标
+
+### 验证
+- `npm run check` 全量 **264/264**（v0.11.0 基线 248 + 12 条 host 共存测试 + 4 条客户端共存渲染测试）：provider 解析七种场景（空注册表 / 注册表已占用 / loader entry 竞速 / config 与 env 覆盖 / 过期快照触发 DUPLICATE 重试）、注册失败回滚不残留 fiber、路由前缀、存储路径与双向一次性迁移（不覆盖、幂等）、回调端口三态、重名工具只丢一个、replay 元数据 provider、`webStatus` provider 字段
+- **真实双插件冒烟**（隔离 `DSH_HOME`，端口 3999，未触碰线上 `~/.dsh`/3080）：同一 profile 同时安装上游 0.7.2 与本插件，启动日志无任何 `did not activate`，本插件打印 `provider "antigravity" is already taken by another plugin; using provider "antigravity-pool" (coexist mode; decided by loader entry "dsh-gemini-pool")`，上游继续正常注册 `antigravity`；两侧 API 各自 200（`/antigravity-pool-next/api/status` 的 JSON 带 `provider: "antigravity-pool"`，`/antigravity/api/status` 为上游 payload），未带 cookie 均 401；各自 POST `/config` 后确认两份账号文件分别落在 `antigravity-pool-next-accounts.json` 与 `antigravity-pool-accounts.json`，删除本插件命名文件后重启触发一次性迁移并恢复
+
 ## v0.11.0 — 2026-11-11
 
 ### Changed

@@ -1,4 +1,6 @@
 {
+  "provider": "antigravity-pool",
+  "providerName": "Antigravity Pool",
   "schedulingMode": "manual",
   "activeAccountId": "acc_0000000",
   "cooldownMs": 60000,

@@ -1,4 +1,4 @@
-// Builds test/fixtures/status-value.json from the LIVE /antigravity/api/status response,
+// Builds test/fixtures/status-value.json from the LIVE /antigravity-pool-next/api/status response,
 // with all personally identifying values replaced by synthetic ones of the same shape.
 //
 // The fixture is committed, so it must never contain the real account email, account id,
@@ -36,7 +36,7 @@ function scrub(value) {
   return value;
 }
 
-const url = `http://127.0.0.1:${PORT}/antigravity/api/status`;
+const url = `http://127.0.0.1:${PORT}/antigravity-pool-next/api/status`;
 const response = await fetch(url, { method: "GET" });
 if (!response.ok) {
   throw new Error(`status probe failed: HTTP ${response.status} from ${url}`);

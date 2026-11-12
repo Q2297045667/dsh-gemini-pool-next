@@ -171,6 +171,8 @@ Day-to-day operations run as chat commands:
 
 Credentials live at `$DSH_HOME/storages/antigravity-pool-accounts.json` (on DSH Desktop: `%APPDATA%\dsh-desktop\harness\storages\...`), including access and refresh tokens. Keep that file private. Legacy single-account credentials migrate automatically on upgrade, so you do not have to sign in again.
 
+When the upstream `dsh-gemini-pool` plugin is installed alongside this one (see “Coexisting with the upstream plugin”), this plugin switches to `antigravity-pool-next-accounts.json` / `antigravity-pool-next-settings.json` / `antigravity-pool-next-oauth.json`. The first coexisting boot copies the legacy files once and never overwrites an existing file.
+
 ## 🧊 Cooldown & Self-healing
 
 An account that hits 429 enters exponential-backoff cooldown. Repeated failures disable it and hand it to a background probe that revives it once quota recovers. No manual steps.
@@ -192,9 +194,34 @@ When the main model cannot see images (e.g. a text-only model), a Gemini model f
 - **The `antigravity_read_image` tool (fallback)**: for a closer look at a specific image, the main model can call it explicitly (the argument is the hash prefix from the description; local paths inside the workspace, data: URLs, and public http(s) image URLs are also accepted) for a fresh description.
 
 - **Data flow**: images are processed through Google accounts in the pool, sharing quota with chat and image generation.
-- **On by default**. To turn it off (any one of these): set the environment variable `ANTIGRAVITY_VISION_ENABLED=false`; or toggle it off in the Settings · Vision Bypass card; or set `visionEnabled: false` in accounts.json via `/antigravity/api/config`. The switch governs both image admission and automatic description; with it off, pasting behaves exactly as the host does out of the box. `visionModel` picks the describing model — leave it empty for automatic selection, or pick one in the Settings card.
+- **On by default**. To turn it off (any one of these): set the environment variable `ANTIGRAVITY_VISION_ENABLED=false`; or toggle it off in the Settings · Vision Bypass card; or set `visionEnabled: false` in accounts.json via `/antigravity-pool-next/api/config`. The switch governs both image admission and automatic description; with it off, pasting behaves exactly as the host does out of the box. `visionModel` picks the describing model — leave it empty for automatic selection, or pick one in the Settings card.
 - **Known dependency**: automatic description relies on the host's `agent/pre-step` event and image admission on `resolveModelInfo`. If pasting images misbehaves after a major host upgrade, revisit this section (verified against DSH 0.2.2-rc.1).
 - **Troubleshooting**: if the model still receives a placeholder after pasting an image, run `/antigravity-doctor` and check the `visionBridge` / `visionShim` lines (`registered` + `installed` is the healthy state). Server log lines prefixed `[Antigravity Pool Vision]` record every bridge decision (request entry, model gate, rewrite result or passthrough reason); zero prefixed lines after a paste means the event never reached the bridge.
+
+## 🤝 Coexisting with the upstream plugin
+
+If the upstream `dsh-gemini-pool` plugin (or another build of it) is installed too, both plugins want provider `antigravity`, both want the `/antigravity/api` route and both write `storages/antigravity-*.json`. DSH allows exactly one adapter per provider, so the second plugin fails to load with `an adapter for provider "antigravity" is already registered`.
+
+This plugin ships a built-in coexistence mode — nothing to configure when the upstream plugin is present:
+
+| Conflict | upstream `dsh-gemini-pool` | this plugin (coexisting) |
+|---|---|---|
+| provider id | `antigravity` | **`antigravity-pool`** (shown as **Antigravity Pool**) |
+| web API route | `/antigravity/api` | **`/antigravity-pool-next/api`** |
+| accounts / settings / credentials | `antigravity-pool-accounts.json` etc. | **`antigravity-pool-next-*.json`** (copied once from the legacy files, never overwritten) |
+| OAuth callback port | 51121 | **51122** (`ANTIGRAVITY_CALLBACK_PORT` still wins) |
+| settings entry | Antigravity | **Antigravity Pool** (separate entry) |
+
+Both plugins then load and stay usable: pick a model under **Antigravity Pool** to use this plugin's pool (Gemini 4 Argon / 3.8, Claude 5.5, GPT-OSS, image generation and the vision bridge), or under **Antigravity** to use the upstream one.
+
+**Point your default model at this plugin**: this repo’s profile patch sets `agent-default-model.provider` to `antigravity-pool`. Upgrading from an older install that still says `provider: antigravity` resolves to the upstream plugin (which may not have newer models such as Gemini 4 Argon) — edit `agent-default-model` in `~/.dsh/profiles/web/cordis.patch.yml` or re-select a model in Settings.
+
+**The decision is deterministic**: plugin activation order is a race in DSH (all entries start in one `Promise.all`), so checking “is the provider already registered?” is not enough; this plugin also reads the loader entry list and yields whenever an enabled `dsh-gemini-pool` entry is configured. You can force it with `ANTIGRAVITY_PROVIDER_ID` / `ANTIGRAVITY_COEXIST_PROVIDER_ID` / `ANTIGRAVITY_PROVIDER_NAME` (plugin config keys `providerId` / `coexistProviderId` / `providerName`). The boot log prints one `[Antigravity Pool] provider "antigravity" is already taken ... (coexist mode; decided by ...)` line, and `/antigravity-doctor` reports `provider=` / `coexistMode=`.
+
+**Trade-offs**:
+- Each plugin keeps its own copy of the same account credentials. Do not sign in to the same Google account in both at once — a rotated refresh token invalidates the other copy. Sign in once, on the side you use.
+- `antigravity_image_generate` exists in both; the first registrant wins. This plugin's own `antigravity_read_image` always registers.
+- The `antigravity-login` CLI runs as a separate process in the non-coexisting namespace; in coexistence mode use the sign-in flow in the Antigravity Pool settings card.
 
 ## 🤖 Models
 
@@ -242,7 +269,7 @@ flowchart LR
     VB["Vision bridge<br/>image to text"]
     TOOLS["Tools<br/>read_image · image_generate"]
   end
-  STORE[("Credential store<br/>antigravity-pool-accounts.json")]
+  STORE[("Credential store<br/>antigravity-pool-accounts.json<br/>(coexisting: antigravity-pool-next-accounts.json)")]
   GOOGLE["Google Antigravity API"]
 
   SEL --> CORE

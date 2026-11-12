@@ -1,11 +1,15 @@
 // Renders the settings section with REAL data shapes (fixture captured from the live
-// /antigravity/api/status endpoint, PII scrubbed) and asserts the card actually shows
-// content: account row, quota rows, model list.
+// /antigravity-pool-next/api/status endpoint, PII scrubbed) and asserts the card actually
+// shows content: account row, quota rows, model list.
 //
 // This complements client-render.test.mjs. That file proves the component does not throw;
 // this one proves the populated render path produces the visible content a user expects,
 // and that mounting the panel triggers a quota refresh (the "opening settings should
 // refresh quota immediately" requirement).
+//
+// Coexistence: the upstream dsh-gemini-pool plugin owns /antigravity/api, so this plugin's
+// client must talk to /antigravity-pool-next/api only — the fake fetch below rejects any
+// other prefix, which makes a regressed API base fail these tests instead of silently 404ing.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -27,6 +31,7 @@ function loadGeminiSource() {
   return second === -1 ? full : full.slice(0, second);
 }
 const FIXTURE_PATH = join(here, "fixtures", "status-value.json");
+const API_BASE = "/antigravity-pool-next/api";
 
 const STATUS_FIXTURE = JSON.parse(readFileSync(FIXTURE_PATH, "utf8"));
 
@@ -215,6 +220,11 @@ function loadClient({ statusPayload, quotaPayload, requests, requestHandler, loc
   const fetchStub = async (url, options = {}) => {
     const method = (options.method || "GET").toUpperCase();
     requests.push(`${method} ${url}`);
+    // Only this plugin's coexist prefix is stubbed: a client bundle still
+    // pointing at upstream's /antigravity/api must fail loudly here.
+    if (!String(url).startsWith(API_BASE)) {
+      return { ok: false, status: 404, json: async () => ({ ok: false, error: "not-stubbed" }) };
+    }
     const custom = requestHandler?.(url, options);
     if (custom) return custom;
     const isStatus = String(url).endsWith("/status");
@@ -303,13 +313,57 @@ test("opening the panel triggers an immediate quota refresh", async () => {
   await mount();
 
   assert.ok(
-    requests.some((r) => r.includes("/status")),
-    `expected a /status fetch on mount, saw: ${requests.join(", ")}`,
+    requests.includes(`GET ${API_BASE}/status`),
+    `expected a GET ${API_BASE}/status fetch on mount, saw: ${requests.join(", ")}`,
   );
   assert.ok(
-    requests.some((r) => r.includes("/quota")),
-    `expected an immediate /quota fetch on mount, saw: ${requests.join(", ")}`,
+    requests.includes(`GET ${API_BASE}/quota`),
+    `expected an immediate GET ${API_BASE}/quota fetch on mount, saw: ${requests.join(", ")}`,
   );
+  // Coexistence: every fetch must stay on OUR prefix — upstream owns /antigravity/api.
+  assert.deepEqual(
+    requests.filter((request) => !request.includes(API_BASE)),
+    [],
+    `all client requests must use ${API_BASE}, saw: ${requests.join(", ")}`,
+  );
+});
+
+test("provider line renders the host-resolved provider id under the page title", async () => {
+  // Coexist mode: upstream dsh-gemini-pool keeps provider "antigravity", so the host
+  // status payload reports ours as "antigravity-pool". The card surfaces that id as a
+  // subtle sub-line so the user can tell which provider id this card owns.
+  const { mount, rt } = loadClient({ statusPayload: STATUS_FIXTURE, quotaPayload: STATUS_FIXTURE, requests: [] });
+  const text = await mount();
+
+  const sub = rt.nodes.find((node) => node.props && node.props.className === "dsha-page-sub");
+  assert.ok(sub, "the provider sub-line must render when status.provider is present");
+  const subText = sub.children.filter((child) => typeof child === "string").join("");
+  assert.equal(subText, "提供方（provider）: antigravity-pool");
+  assert.match(text, /提供方（provider）: antigravity-pool/);
+
+  // Page chrome placement: after the title, before the settings cards.
+  const titleIndex = rt.nodes.findIndex(
+    (node) => node.props && node.props.className === "dsha-page-title",
+  );
+  const subIndex = rt.nodes.indexOf(sub);
+  assert.ok(titleIndex !== -1, "page title must render");
+  assert.ok(subIndex > titleIndex, "provider line must render under the page title");
+});
+
+test("provider line is absent when the status payload has no provider field", async () => {
+  // Old/other host payload without the coexist fields: no dangling label may appear.
+  const synthetic = structuredClone(STATUS_FIXTURE);
+  delete synthetic.provider;
+  delete synthetic.providerName;
+  const { mount, rt } = loadClient({ statusPayload: synthetic, quotaPayload: synthetic, requests: [] });
+  const text = await mount();
+
+  assert.equal(
+    rt.nodes.filter((node) => node.props && node.props.className === "dsha-page-sub").length,
+    0,
+    "no provider sub-line may render without status.provider",
+  );
+  assert.doesNotMatch(text, /提供方/);
 });
 
 test("quota rows render from real quota groups", async () => {
@@ -433,6 +487,10 @@ test("English locale renders the localized Gemini 4 Models label", async () => {
   assert.equal(titles.filter((title) => title === "Gemini 4 Models").length, 1);
   assert.match(text, /Gemini 4 Models · Weekly Limit Remaining/);
 
+  // en locale also localizes the coexist provider sub-line.
+  assert.match(text, /Provider: antigravity-pool/);
+  assert.doesNotMatch(text, /提供方/);
+
   const argonBar = rt.nodes.find(
     (node) => node.props.role === "progressbar"
       && String(node.props["aria-label"] || "").includes("Gemini 4 Models"),
@@ -537,7 +595,7 @@ test("successful cooldown saves show a confirmation", async () => {
   await mount();
   await rt.nodes.find((node) => node.type === "button" && node.children.includes("保存冷却设置")).props.onClick();
   const text = await mount();
-  assert.ok(requests.includes("POST /antigravity/api/config"));
+  assert.ok(requests.includes(`POST ${API_BASE}/config`));
   assert.match(text, /设置已保存/);
 });
 

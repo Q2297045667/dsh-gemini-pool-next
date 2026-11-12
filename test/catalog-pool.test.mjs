@@ -76,7 +76,7 @@ function apiHandler(pool, settings) {
   return async (path = "status") => {
     let status;
     let body;
-    await handler({ method: "GET", url: `/antigravity/api/${path}` }, {
+    await handler({ method: "GET", url: `/antigravity-pool-next/api/${path}` }, {
       writeHead(value) { status = value; },
       end(value) { body = JSON.parse(value); },
     });
