@@ -7,6 +7,7 @@ import { AccountPoolManager } from "../lib/pool.js";
 import {
   AntigravityPoolAdapter,
   FileModelSettingsStore,
+  fetchQuotaForAccount,
   generateImageThroughPool,
   parseCatalogModels,
   requestVisionThroughPool,
@@ -265,3 +266,125 @@ for (const kind of ["text", "image", "vision"]) {
     assert.equal(status.accounts.find((account) => account.id === locked.id).failureCount, 1);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Folded-model selection migration (addendum): a selection saved before the
+// backend's per-level entity ids were folded into one public model still holds
+// the raw ids. A quota refresh must migrate them onto the base instead of
+// silently unchecking the model the user enabled.
+// ---------------------------------------------------------------------------
+
+/** Quota-refresh fetch stub for one account: discovery + quota + one catalog. */
+function stubQuotaFetch(t, payload) {
+  t.mock.method(globalThis, "fetch", async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith(":loadCodeAssist")) return Response.json({ cloudaicompanionProject: "project-hydrogen" });
+    if (path.endsWith(":retrieveUserQuotaSummary")) return Response.json({ groups: [] });
+    if (path.endsWith(":fetchAvailableModels")) return Response.json({ models: payload });
+    throw new Error(`unexpected request ${path}`);
+  });
+}
+
+async function setupMigration(t) {
+  const dir = await mkdtemp(join(tmpdir(), "gemini-hydrogen-migrate-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const pool = new AccountPoolManager(join(dir, "accounts.json"), join(dir, "legacy.json"));
+  await pool.init();
+  await pool.addOrUpdateAccount({
+    email: "hydrogen@example.com",
+    access: "access_hydrogen",
+    refresh: "refresh_hydrogen",
+    expires: Date.now() + 3600_000,
+    projectId: "project-hydrogen",
+  });
+  const settings = new FileModelSettingsStore(join(dir, "models.json"));
+  return { pool, settings, account: pool.allAccounts[0] };
+}
+
+const HYDROGEN_ENTITIES = {
+  "gemini-4-hydrogen-low": { displayName: "Gemini 4 Hydrogen (Low)" },
+  "gemini-4-hydrogen-medium": { displayName: "Gemini 4 Hydrogen (Medium)" },
+  "gemini-4-hydrogen-high": { displayName: "Gemini 4 Hydrogen (High)" },
+  "gemini-4-hydrogen-xhigh": { displayName: "Gemini 4 Hydrogen (XHigh)" },
+};
+
+test("a selection holding raw folded entity ids migrates onto the base model exactly once", async (t) => {
+  const { pool, settings, account } = await setupMigration(t);
+  // A catalog/selection saved by the previous version: the four raw hydrogen
+  // entities were selectable, the base model did not exist yet.
+  await settings.write({
+    catalogModels: parseCatalogModels({ models: { "gemini-3.8-flash-low": {} } }),
+    enabledModelIds: [
+      "gemini-3.8-flash",
+      "gemini-4-hydrogen-low",
+      "gemini-4-hydrogen-medium",
+      "gemini-4-hydrogen-high",
+      "gemini-4-hydrogen-xhigh",
+    ],
+  });
+  stubQuotaFetch(t, { "gemini-3.8-flash-low": {}, ...HYDROGEN_ENTITIES });
+
+  await fetchQuotaForAccount(account, pool, settings);
+
+  const stored = await settings.read();
+  assert.deepEqual(
+    stored.enabledModelIds.filter((id) => id === "gemini-4-hydrogen"),
+    ["gemini-4-hydrogen"],
+    `the folded base must be enabled exactly once (got ${JSON.stringify(stored.enabledModelIds)})`,
+  );
+  assert.equal(
+    stored.enabledModelIds.some((id) => id.startsWith("gemini-4-hydrogen-")),
+    false,
+    "raw folded entity ids must not stay in the selection",
+  );
+  assert.ok(stored.enabledModelIds.includes("gemini-3.8-flash"), "unrelated selections survive the refresh");
+});
+
+test("a folded base no account serves is not enabled by the migration", async (t) => {
+  const { pool, settings, account } = await setupMigration(t);
+  await settings.write({
+    catalogModels: parseCatalogModels({ models: { "gemini-3.8-flash-low": {} } }),
+    enabledModelIds: ["gemini-4-hydrogen-xhigh"],
+  });
+  // The Pro plan only advertises the disabled placeholder for Hydrogen.
+  stubQuotaFetch(t, {
+    "gemini-3.8-flash-low": {},
+    "gemini-4-hydrogen-disabled": {
+      displayName: "Gemini 4 Hydrogen",
+      disabled: true,
+      tagTitle: "Unavailable",
+    },
+  });
+
+  await fetchQuotaForAccount(account, pool, settings);
+
+  const stored = await settings.read();
+  assert.equal(
+    stored.enabledModelIds.includes("gemini-4-hydrogen"),
+    false,
+    "an unavailable folded base must not be silently enabled",
+  );
+});
+
+test("the Hydrogen xhigh effort is labeled XHigh for the model selector", async () => {
+  const settings = {
+    async read() {
+      return {
+        catalogModels: parseCatalogModels({ models: HYDROGEN_ENTITIES }),
+        enabledModelIds: ["gemini-4-hydrogen"],
+      };
+    },
+  };
+  const models = await new AntigravityPoolAdapter({}, settings).listModels("antigravity");
+  const hydrogen = models.find((model) => model.id === "gemini-4-hydrogen");
+  assert.ok(hydrogen, "the folded Hydrogen model must be listed");
+  assert.deepEqual(
+    hydrogen.reasoning.efforts.map(({ id, name }) => [id, name]),
+    [
+      ["low", "Low"],
+      ["medium", "Medium"],
+      ["high", "High"],
+      ["xhigh", "XHigh"],
+    ],
+  );
+});

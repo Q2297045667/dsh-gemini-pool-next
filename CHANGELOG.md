@@ -2,6 +2,23 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.13.0 — 2026-11-13
+
+### Added
+- **接入新旗舰 Gemini 4 Hydrogen（含全新 XHigh 思考等级）**：后端新增 `gemini-4-hydrogen-low/medium/high/xhigh` 四个实体（1M 上下文、**262144** 输出上限、`thinkingLevel` 1/2/3/**100**、tag `New`），但只在 daily 端点通告。静态目录新增 `gemini-4-hydrogen`（思考等级 Low/Medium/High/**XHigh**），xhigh 首次映射到真实实体 `gemini-4-hydrogen-xhigh`（此前所有模型的 xhigh 都只是 high 的别名）；`inferModelShape` 的等级后缀识别扩展 `-xhigh`，目录解析因此把四个原始实体折叠成一个可用模型，不再在设置页列出四条 `gemini-4-hydrogen-*` 原始条目
+- **既有安装的已勾选状态自动迁移**：旧目录里被勾选的 raw 实体 id（如四个 `gemini-4-hydrogen-*`）在下次额度刷新时按 `splitEntityId` 归并到折叠后的基础模型，只在新基础模型「存在且可用」时启用并去重，不需要用户手动重新勾选；`xhigh` 的思考等级标签修正为 `XHigh`
+- **新 daily 端点与按能力路由**：新增 `https://daily-cloudcode-pa.googleapis.com`。目录 / 额度 / 流式请求按 **daily → production → daily-sandbox** 尝试，onboarding 与项目发现保持 **production → sandbox**（daily 对 `listCloudAICompanionProjects` 返回 HTML 404）。某端点对某方法返回 HTML 路由页时判定为「不提供该方法」，跳到下一个并在进程内做有界记忆（64 条，全死时自动清空重试）；实测 production 端点当前对所有流式请求返回 429，而 daily 返回 200 —— 新顺序既拿到 Hydrogen 又避开这个 429
+- **结构化、可行动的报错**（新模块 `lib/errors.js`）：解析 Google RPC 错误（`BadRequest.fieldViolations`、`ErrorInfo`、`RetryInfo`、`QuotaFailure`、`Help`）以及二次编码 JSON、纯文本、HTML、SSE 流内 `{error}`，统一输出 `code / kind / message / hint / retryAfterMs / httpStatus / grpcStatus / reason / field / endpoint / model / entity / traceId / requestId / triedEndpoints`。消息 = 真实原因 + 模型/实体 + 端点，附脱敏截断的后端原文、`Rejected field:`、`Trace:` 与 `Next:` 建议；分类覆盖 `QUOTA_EXCEEDED`（仍触发冷却轮转）、`RATE_LIMIT`（带重试延迟）、`MODEL_NOT_FOUND`（提示目录过期或套餐不支持）、`INVALID_REQUEST`（含被拒字段）、`AUTH`（登录/套餐）、`SERVER`/`OVERLOADED`（容量，不是额度）、`ENDPOINT_UNSUPPORTED`、`TRANSPORT`/`TIMEOUT`；chat/生图/视觉/探活/额度/目录全部走同一管线
+- **响应身份进入诊断**：SSE 每帧的 `traceId` / `metadata` 与 `response.modelVersion` / `responseId` 记入 `/antigravity-doctor`（`lastTraceId=`、`lastModelVersion=`、`lastResponseId=`、`lastResponseMetadata=`）以及结构化错误字段（`errorCode=`、`errorGrpcStatus=`、`errorEndpoint=`、`errorTraceId=`、`errorRetryAfterMs=`），报错可直接对上 Google 侧 trace
+
+### Fixed
+- **后端对「Antigravity 官方人格提示词」做指纹识别并回 429（账号被误冷却/禁用的真实根因）**：只要请求的系统提示词包含官方那句 `You are pair programming with a user to solve coding tasks. Be concise, practical, and tool-aware.`（以及 `You are Antigravity, a powerful agentic AI coding assistant designed by Google DeepMind.` 与 `[ignore]…[/ignore]` 组合），无论端点与模型都返回 429 `RESOURCE_EXHAUSTED`；插件把它当额度耗尽，连续失败后禁用账号（本机账号当时确实已被禁用，failureCount=6）。现在改为插件自有中性系统提示词（保留「不输出规则检查/thinking 前言」约束），并移除了会复读官方人格的 `[ignore]` 包裹；实测 daily 端点带工具、`gemini-4-argon` / `gemini-4-hydrogen` 均返回 200，账号恢复可用
+
+### 验证
+- `npm run check` 全量 **316/316**（v0.12.0 基线 264 + Hydrogen 目录/路由 11 条 + 端点/报错/迁移 40 条 + 系统提示词回归 1 条）：Hydrogen 折叠与 262144 上限、xhigh→真实实体、per-level 实体不发 thinkingConfig、目录折叠/禁用占位、enabled 迁移（raw→base、不可用不启用）、端点能力路由与 HTML 跳过、全端点 429 仍按额度分类且冷却只记一次、真实 404/400/429/HTML 的报错分类与脱敏截断、traceId/SSE 流内错误、doctor 新字段、系统提示词不含被指纹识别的官方文本
+- **真机验证（同一 Pro 账号，通过插件本体而非裸探针）**：`fetchQuotaForAccount` 走新端点后目录 18 条、`gemini-4-hydrogen` 单条可用（efforts low/medium/high/xhigh、maxTokens 262144、remainingFraction≈0.999），无 raw 残留且已勾选集合已迁移；`AntigravityPoolAdapter.stream` 实测 `gemini-4-hydrogen` xhigh/low 与 `gemini-4-argon` high 全部出流 200；把运行时实体覆盖成不存在 id 时得到精确报错：`Antigravity did not find entity "gemini-4-hydrogen-nope" (model "gemini-4-hydrogen") on … (HTTP 404 NOT_FOUND)` + `Backend said: Requested entity was not found.` + `Trace: …` + `Next:` 建议。端点对比实测：production 流式 429、daily/sandbox 200（Hydrogen 仅 daily/sandbox 通告 31 个实体，production 26 个）；系统提示词 A/B 实测：官方人格文本 → 429，自有指令 → 200（带 tools 亦然）
+- 说明：测试未做真实 Google 登录、线上模型调用循环或完整 DSH GUI 端到端；网络端点与报错样本为 2026-11-13 单账号实测
+
 ## v0.12.0 — 2026-11-12
 
 ### Added

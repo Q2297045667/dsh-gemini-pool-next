@@ -384,3 +384,212 @@ test("usable Gemini 4 Carbon entities route per level like Argon", () => {
   // The level suffix pins the level, so no thinking option may ride along.
   assert.equal(splitEntityId("gemini-4-carbon-high").kind, "level");
 });
+
+/** The entities the daily/sandbox endpoint serves for the newest model family. */
+const HYDROGEN_ENTITIES = new Set([
+  "gemini-4-hydrogen-low",
+  "gemini-4-hydrogen-medium",
+  "gemini-4-hydrogen-high",
+  "gemini-4-hydrogen-xhigh",
+]);
+
+test("Gemini 4 Hydrogen is a first-class catalog model with a real xhigh level", () => {
+  const hydrogen = modelById("gemini-4-hydrogen");
+  assert.ok(hydrogen, "gemini-4-hydrogen must be catalogued");
+  assert.equal(hydrogen.name, "Gemini 4 Hydrogen");
+  assert.deepEqual(hydrogen.inputModalities, ["text", "image"]);
+  assert.equal(hydrogen.contextWindow, 1048576);
+  assert.equal(hydrogen.maxTokens, 262144);
+  // The four thinking levels the daily endpoint advertises, weakest first.
+  assert.deepEqual(hydrogen.reasoningEfforts, ["low", "medium", "high", "xhigh"]);
+  // This account's daily endpoint serves it, so it is not statically unavailable.
+  assert.equal(hydrogen.available, undefined);
+  assert.match(hydrogen.description, /newest Gemini 4 flagship/i);
+  assert.match(hydrogen.description, /daily/i);
+  // Only the base is a public model; level siblings are entities, not models.
+  assert.equal(modelById("gemini-4-hydrogen-low"), undefined);
+  assert.equal(modelById("gemini-4-hydrogen-medium"), undefined);
+  assert.equal(modelById("gemini-4-hydrogen-high"), undefined);
+  assert.equal(modelById("gemini-4-hydrogen-xhigh"), undefined);
+  assert.equal(modelById("gemini-4-hydrogen-disabled"), undefined);
+});
+
+test("Gemini 4 Hydrogen routes xhigh onto the real -xhigh entity", () => {
+  const hydrogen = ROUTING["gemini-4-hydrogen"];
+  assert.ok(hydrogen, "gemini-4-hydrogen must have a routing entry");
+  assert.equal(hydrogen.off, "gemini-4-hydrogen-high");
+  assert.equal(hydrogen.defaultRequestId, "gemini-4-hydrogen-high");
+  assert.equal(hydrogen.routing.minimal, "gemini-4-hydrogen-low");
+  assert.equal(hydrogen.routing.low, "gemini-4-hydrogen-low");
+  assert.equal(hydrogen.routing.medium, "gemini-4-hydrogen-medium");
+  assert.equal(hydrogen.routing.high, "gemini-4-hydrogen-high");
+  // The first model whose xhigh effort is a distinct backend entity instead of
+  // aliasing the high sibling.
+  assert.equal(hydrogen.routing.xhigh, "gemini-4-hydrogen-xhigh");
+  assert.notEqual(hydrogen.routing.xhigh, hydrogen.routing.high);
+  assert.equal(staticRequestModelId("gemini-4-hydrogen", "off"), "gemini-4-hydrogen-high");
+  assert.equal(staticRequestModelId("gemini-4-hydrogen", undefined), "gemini-4-hydrogen-high");
+  assert.equal(staticRequestModelId("gemini-4-hydrogen", "minimal"), "gemini-4-hydrogen-low");
+  assert.equal(staticRequestModelId("gemini-4-hydrogen", "low"), "gemini-4-hydrogen-low");
+  assert.equal(staticRequestModelId("gemini-4-hydrogen", "medium"), "gemini-4-hydrogen-medium");
+  assert.equal(staticRequestModelId("gemini-4-hydrogen", "high"), "gemini-4-hydrogen-high");
+  assert.equal(staticRequestModelId("gemini-4-hydrogen", "xhigh"), "gemini-4-hydrogen-xhigh");
+  // Level suffixes and the disabled placeholder never get a routing entry.
+  assert.equal(ROUTING["gemini-4-hydrogen-xhigh"], undefined);
+  assert.equal(ROUTING["gemini-4-hydrogen-disabled"], undefined);
+});
+
+test("Gemini 4 Hydrogen keeps its 262144 output ceiling on every entity", () => {
+  for (const runtimeModel of [
+    "gemini-4-hydrogen",
+    "gemini-4-hydrogen-low",
+    "gemini-4-hydrogen-medium",
+    "gemini-4-hydrogen-high",
+    "gemini-4-hydrogen-xhigh",
+    "gemini-4-hydrogen-disabled",
+  ]) {
+    assert.equal(getMaxOutputTokens("gemini-4-hydrogen", runtimeModel), 262144, runtimeModel);
+    assert.equal(getMaxOutputTokens("gemini-4-hydrogen-xhigh", runtimeModel), 262144, runtimeModel);
+  }
+  // Carbon shares the identical 262144 ceiling; the other families are untouched.
+  for (const runtimeModel of [
+    "gemini-4-carbon",
+    "gemini-4-carbon-low",
+    "gemini-4-carbon-medium",
+    "gemini-4-carbon-high",
+    "gemini-4-carbon-disabled",
+  ]) {
+    assert.equal(getMaxOutputTokens("gemini-4-carbon", runtimeModel), 262144, runtimeModel);
+  }
+  assert.equal(getMaxOutputTokens("gemini-4-argon", "gemini-4-argon-high"), 65536);
+  assert.equal(getMaxOutputTokens("claude-opus-5.5", "claude-opus-5-5-high"), 64000);
+});
+
+test("Gemini 4 Hydrogen matcher folds all four live entities into one base", () => {
+  const matches = baseModelMatcher("gemini-4-hydrogen");
+  for (const entityId of HYDROGEN_ENTITIES) assert.ok(matches(entityId), entityId);
+  assert.ok(matches("gemini-4-hydrogen"));
+  assert.ok(matches("gemini-4-hydrogen-disabled"));
+  // The backend labels entities as "Gemini 4 Hydrogen (Level)".
+  for (const label of ["Low", "Medium", "High", "XHigh"]) {
+    assert.ok(matches(`Gemini 4 Hydrogen (${label})`), label);
+  }
+  assert.ok(matches("Gemini 4 Hydrogen"));
+  // Structural matching refuses every neighbouring family.
+  assert.equal(matches("gemini-4-argon-high"), false);
+  assert.equal(matches("gemini-4-carbon-high"), false);
+  assert.equal(matches("gemini-3.8-flash-high"), false);
+  assert.equal(matches("gemini-3.1-flash-image"), false);
+  assert.equal(baseModelMatcher("gemini-4-argon")("gemini-4-hydrogen-xhigh"), false);
+  assert.equal(baseModelMatcher("gemini-4-carbon")("gemini-4-hydrogen-high"), false);
+  assert.equal(baseModelMatcher("gemini-3.8-flash")("gemini-4-hydrogen-low"), false);
+});
+
+test("splitEntityId and inferModelShape understand the xhigh level", () => {
+  assert.deepEqual(splitEntityId("gemini-4-hydrogen-xhigh"), {
+    base: "gemini-4-hydrogen",
+    kind: "level",
+    level: "xhigh",
+  });
+  assert.deepEqual(splitEntityId("gemini-4-hydrogen-low"), {
+    base: "gemini-4-hydrogen",
+    kind: "level",
+    level: "low",
+  });
+  assert.deepEqual(splitEntityId("gemini-4-hydrogen-disabled"), {
+    base: "gemini-4-hydrogen",
+    kind: "disabled",
+    level: undefined,
+  });
+  // The level suffix stays out of the human-facing name, including xhigh.
+  assert.equal(inferModelShape("gemini-4-hydrogen-xhigh").name, "Gemini 4 Hydrogen");
+  assert.equal(
+    inferModelShape("gemini-4-hydrogen-xhigh", { displayName: "Gemini 4 Hydrogen (XHigh)" }).name,
+    "Gemini 4 Hydrogen",
+  );
+  assert.equal(inferModelShape("gemini-4-hydrogen-low").name, "Gemini 4 Hydrogen");
+  assert.equal(inferModelShape("gemini-4-hydrogen-disabled").name, "Gemini 4 Hydrogen");
+  assert.equal(inferModelShape("gemini-4-hydrogen-xhigh").maxTokens, 262144);
+  assert.equal(inferModelShape("gemini-4-hydrogen-disabled").maxTokens, 262144);
+  assert.equal(inferModelShape("gemini-4-hydrogen-xhigh").contextWindow, 1048576);
+  // The raw shape of the family's entities carries the fourth level too.
+  assert.deepEqual(inferModelShape("gemini-4-hydrogen-xhigh").reasoningEfforts, [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ]);
+  assert.deepEqual(inferModelShape("gemini-4-hydrogen-disabled").reasoningEfforts, [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ]);
+  // The older families keep the three-level names they already had.
+  assert.equal(inferModelShape("gemini-4-argon-high").name, "Gemini 4 Argon");
+  assert.equal(inferModelShape("gemini-4-carbon-high").name, "Gemini 4 Carbon");
+});
+
+test("Gemini 4 Hydrogen exposes the thinking levels its live entities pin", () => {
+  assert.deepEqual(
+    reasoningLevelsForModel("gemini-4-hydrogen", [...HYDROGEN_ENTITIES]),
+    ["low", "medium", "high", "xhigh"],
+  );
+  // Only advertised levels are offered, in canonical order.
+  assert.deepEqual(
+    reasoningLevelsForModel("gemini-4-hydrogen", ["gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-low"]),
+    ["low", "xhigh"],
+  );
+  // With no live entity the declared ceiling stands (the parser uses this for
+  // the unavailable row).
+  assert.deepEqual(reasoningLevelsForModel("gemini-4-hydrogen", []), ["low", "medium", "high", "xhigh"]);
+});
+
+test("xhigh routing follows what the account advertises", () => {
+  const candidates = runtimeEntityCandidates("gemini-4-hydrogen", "xhigh", HYDROGEN_ENTITIES);
+  assert.equal(candidates[0], "gemini-4-hydrogen-xhigh");
+  // Then the cheaper levels, best first, never a phantom id.
+  assert.deepEqual(candidates, [
+    "gemini-4-hydrogen-xhigh",
+    "gemini-4-hydrogen-high",
+    "gemini-4-hydrogen-medium",
+    "gemini-4-hydrogen-low",
+  ]);
+  assert.ok(candidates.every((id) => HYDROGEN_ENTITIES.has(id)));
+  // Older catalogs without the -xhigh entity step down onto -high.
+  const legacy = new Set(["gemini-4-hydrogen-low", "gemini-4-hydrogen-medium", "gemini-4-hydrogen-high"]);
+  assert.equal(runtimeEntityCandidates("gemini-4-hydrogen", "xhigh", legacy)[0], "gemini-4-hydrogen-high");
+  assert.equal(runtimeEntityCandidates("gemini-4-hydrogen", "off", HYDROGEN_ENTITIES)[0], "gemini-4-hydrogen-high");
+  assert.equal(runtimeEntityCandidates("gemini-4-hydrogen", "low", HYDROGEN_ENTITIES)[0], "gemini-4-hydrogen-low");
+  // No advertised entity means no candidate at all (never the static id).
+  assert.deepEqual(runtimeEntityCandidates("gemini-4-hydrogen", "xhigh", new Set()), []);
+});
+
+test("Gemini 4 Hydrogen joins the Gemini text family without crossing the image divide", () => {
+  // Same-generation flagships sort as one tier ahead of every 3.x generation.
+  const gemini = MODELS.filter((model) => model.id.startsWith("gemini"))
+    .sort(compareAntigravityModels)
+    .map((model) => model.id);
+  const hydrogenIndex = gemini.indexOf("gemini-4-hydrogen");
+  assert.ok(hydrogenIndex >= 0);
+  assert.ok(hydrogenIndex < gemini.indexOf("gemini-3.8-flash"), "hydrogen must sort ahead of the 3.x generation");
+  for (const id of ["gemini-4-argon", "gemini-4-carbon", "gemini-4-hydrogen"]) {
+    assert.ok(compareAntigravityModels(modelById(id), modelById("gemini-3.8-flash")) < 0, id);
+  }
+  assert.ok(
+    compareAntigravityModels(modelById("gemini-4-hydrogen"), modelById("gemini-4-argon")) > 0,
+    "the same-generation flagship tier keeps its stable ordering",
+  );
+  // The Hydrogen row belongs to the Gemini text line and can step down onto it.
+  const fallbacks = familyFallbackBases("gemini-4-hydrogen");
+  assert.ok(fallbacks.includes("gemini-4-argon"));
+  assert.ok(fallbacks.includes("gemini-3.8-flash"));
+  assert.equal(fallbacks.includes("gemini-3.1-flash-image"), false);
+  // Unavailable Carbon is still never a fallback target.
+  assert.equal(fallbacks.includes("gemini-4-carbon"), false);
+  // The Argon flagship can now step down onto Hydrogen when the account has it.
+  assert.ok(familyFallbackBases("gemini-4-argon").includes("gemini-4-hydrogen"));
+  // An image model never borrows a text model (there is no other image model).
+  assert.deepEqual(familyFallbackBases("gemini-3.1-flash-image"), []);
+});
+

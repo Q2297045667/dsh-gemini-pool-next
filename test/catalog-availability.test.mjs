@@ -1,12 +1,57 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isUsableRuntimeModelId, parseCatalogModels } from "../lib/index.js";
+import { MODELS } from "../lib/models.js";
 
 function modelsPayload(entries) {
   const models = {};
   for (const [id, info] of Object.entries(entries)) models[id] = info;
   return { models };
 }
+
+/**
+ * One live per-level Gemini 4 Hydrogen entity, distilled from the
+ * daily/sandbox endpoint's fetchAvailableModels payload. No credentials or
+ * account data: only the model metadata the backend advertises.
+ */
+function hydrogenEntity(level, thinkingLevel, { model, remainingFraction = 1 } = {}) {
+  return {
+    displayName: `Gemini 4 Hydrogen (${level})`,
+    supportsImages: true,
+    supportsThinking: true,
+    minThinkingBudget: 32,
+    recommended: true,
+    maxTokens: 1048576,
+    maxOutputTokens: 262144,
+    quotaInfo: { remainingFraction, resetTime: "2026-11-13T12:00:47Z" },
+    model,
+    apiProvider: "API_PROVIDER_GOOGLE_GEMINI",
+    modelProvider: "MODEL_PROVIDER_GOOGLE",
+    supportsVideo: true,
+    tagTitle: "New",
+    thinkingLevel,
+  };
+}
+
+/** The four entities the daily endpoint serves for Gemini 4 Hydrogen. */
+const HYDROGEN_LIVE = {
+  "gemini-4-hydrogen-low": hydrogenEntity("Low", 1, {
+    model: "MODEL_PLACEHOLDER_M527",
+    remainingFraction: 0.5,
+  }),
+  "gemini-4-hydrogen-medium": hydrogenEntity("Medium", 2, {
+    model: "MODEL_PLACEHOLDER_M526",
+    remainingFraction: 0.4,
+  }),
+  "gemini-4-hydrogen-high": hydrogenEntity("High", 3, {
+    model: "MODEL_PLACEHOLDER_M525",
+    remainingFraction: 0.3,
+  }),
+  "gemini-4-hydrogen-xhigh": hydrogenEntity("XHigh", 100, {
+    model: "MODEL_PLACEHOLDER_M528",
+    remainingFraction: 0.9,
+  }),
+};
 
 /** The disabled placeholder the sandbox endpoint serves on a Pro account. */
 const CARBON_DISABLED = {
@@ -191,3 +236,115 @@ test("isUsableRuntimeModelId rejects disabled placeholders and keeps normal enti
   assert.equal(isUsableRuntimeModelId("chat_20706"), false);
   assert.equal(isUsableRuntimeModelId("has whitespace"), false);
 });
+
+test("the daily endpoint's Hydrogen entities fold into one available catalog model", () => {
+  // The plugin merges both endpoints, so the merged payload is the production
+  // catalog plus the daily/sandbox entities that are not in it.
+  const catalog = parseCatalogModels(modelsPayload({
+    ...HYDROGEN_LIVE,
+    "gemini-4-argon-high": { displayName: "Gemini 4 Argon (High)", quotaInfo: { remainingFraction: 0.8 } },
+    "gemini-3.8-flash-low": { displayName: "Gemini 3.8 Flash (Low)" },
+  }));
+  const hydrogenRows = catalog.filter((model) => model.id.includes("hydrogen"));
+  // Exactly one public model, never one row per thinking level.
+  assert.deepEqual(hydrogenRows.map((model) => model.id), ["gemini-4-hydrogen"]);
+  const hydrogen = hydrogenRows[0];
+  assert.equal(hydrogen.name, "Gemini 4 Hydrogen");
+  assert.equal(hydrogen.available, true);
+  assert.deepEqual(hydrogen.inputModalities, ["text", "image"]);
+  assert.equal(hydrogen.contextWindow, 1048576);
+  assert.equal(hydrogen.maxTokens, 262144);
+  assert.deepEqual(hydrogen.reasoningEfforts, ["low", "medium", "high", "xhigh"]);
+  // Quota metadata is inherited from the matching entities.
+  assert.equal(hydrogen.remainingFraction, 0.5);
+  assert.equal(hydrogen.resetTime, "2026-11-13T12:00:47Z");
+  assert.equal(hydrogen.modelProvider, "MODEL_PROVIDER_GOOGLE");
+  // No raw per-level id ever leaks as a catalog model of its own.
+  assert.equal(catalog.some((model) => model.id.startsWith("gemini-4-hydrogen-")), false);
+  assert.ok(!catalog.some((model) => model.id.includes("-disabled")));
+  // One consolidated entry per public model, no extra raw rows.
+  assert.equal(catalog.length, MODELS.length);
+
+  const byId = new Map(catalog.map((model) => [model.id, model]));
+  // The other rows keep their own availability and quota.
+  assert.equal(byId.get("gemini-4-argon").available, true);
+  assert.equal(byId.get("gemini-4-argon").remainingFraction, 0.8);
+  assert.equal(byId.get("gemini-3.8-flash").available, true);
+  assert.equal(byId.get("gemini-4-carbon").available, false);
+  assert.equal(byId.get("claude-opus-5.5").available, false);
+  assert.equal(byId.get("gpt-oss-120b").available, false);
+
+  // Every advertised level entity is routable, including the real xhigh one.
+  assert.equal(isUsableRuntimeModelId("gemini-4-hydrogen-xhigh"), true);
+  assert.equal(isUsableRuntimeModelId("gemini-4-hydrogen-disabled"), false);
+});
+
+test("a disabled Hydrogen placeholder stays unavailable with the backend reason", () => {
+  const catalog = parseCatalogModels(modelsPayload({
+    "gemini-3.8-flash-low": { displayName: "Gemini 3.8 Flash (Low)" },
+    "gemini-4-hydrogen-disabled": {
+      displayName: "Gemini 4 Hydrogen",
+      supportsImages: true,
+      supportsThinking: true,
+      maxTokens: 1048576,
+      maxOutputTokens: 262144,
+      disabled: true,
+      tagTitle: "Unavailable",
+      tagDescription: "Gemini 4 Hydrogen is currently available to Ultra plan subscribers.",
+      thinkingLevel: 2,
+    },
+  }));
+  const byId = new Map(catalog.map((model) => [model.id, model]));
+
+  // The placeholder never becomes a catalog model of its own.
+  assert.equal(byId.get("gemini-4-hydrogen-disabled"), undefined);
+  assert.ok(!catalog.some((model) => model.id.includes("-disabled")), "no disabled entity may become a catalog model");
+
+  // The consolidated public model stays visible but unavailable, with the
+  // backend's own explanation.
+  const hydrogen = byId.get("gemini-4-hydrogen");
+  assert.ok(hydrogen, "the consolidated Gemini 4 Hydrogen entry must stay in the catalog");
+  assert.equal(hydrogen.available, false);
+  assert.equal(hydrogen.remainingFraction, undefined);
+  assert.equal(hydrogen.unavailableReason, "Gemini 4 Hydrogen is currently available to Ultra plan subscribers.");
+  assert.equal(hydrogen.contextWindow, 1048576);
+  assert.equal(hydrogen.maxTokens, 262144);
+  assert.deepEqual(hydrogen.reasoningEfforts, ["low", "medium", "high", "xhigh"]);
+  // Every other row keeps its own availability untouched.
+  assert.equal(byId.get("gemini-3.8-flash").available, true);
+  assert.equal(byId.get("gemini-4-argon").available, false);
+  assert.equal(byId.get("gemini-4-carbon").available, false);
+  assert.equal(catalog.some((model) => model.id.startsWith("gemini-4-hydrogen-")), false);
+});
+
+test("adding Hydrogen leaves every other catalog row unchanged", () => {
+  const otherEntries = {
+    "gemini-4-argon-high": { displayName: "Gemini 4 Argon (High)", quotaInfo: { remainingFraction: 0.7 } },
+    "gemini-3.8-flash-low": { displayName: "Gemini 3.8 Flash (Low)" },
+    "gemini-3.8-flash-medium": { displayName: "Gemini 3.8 Flash (Medium)" },
+    "claude-opus-5-5-high": { displayName: "Claude Opus 5.5 (High)" },
+    "gpt-oss-120b-medium": { displayName: "GPT-OSS 120B (Medium)" },
+  };
+  const without = parseCatalogModels(modelsPayload(otherEntries));
+  const withHydrogen = parseCatalogModels(modelsPayload({ ...otherEntries, ...HYDROGEN_LIVE }));
+  const pick = (catalog, id) => {
+    const model = catalog.find((entry) => entry.id === id);
+    return {
+      id: model.id,
+      name: model.name,
+      available: model.available,
+      reasoningEfforts: model.reasoningEfforts,
+      maxTokens: model.maxTokens,
+      contextWindow: model.contextWindow,
+      remainingFraction: model.remainingFraction,
+      unavailableReason: model.unavailableReason,
+    };
+  };
+  const hydrogenRow = pick(withHydrogen, "gemini-4-hydrogen");
+  assert.equal(hydrogenRow.available, true, "Hydrogen is served by the daily endpoint");
+  for (const model of MODELS) {
+    if (model.id === "gemini-4-hydrogen") continue;
+    assert.deepEqual(pick(withHydrogen, model.id), pick(without, model.id), model.id);
+  }
+});
+

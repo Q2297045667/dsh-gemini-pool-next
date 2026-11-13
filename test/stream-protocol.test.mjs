@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { requestAntigravityChunksWithAccount, probeAccountLiveness } from "../lib/index.js";
+import {
+  doctorText,
+  getAntigravityDiagnostics,
+  probeAccountLiveness,
+  requestAntigravityChunksWithAccount,
+} from "../lib/index.js";
 import { modelById } from "../lib/models.js";
 
 const tokenInfo = { token: "protocol-test", projectId: "test-project" };
@@ -97,11 +102,31 @@ test("no whitespace-only text part ever reaches the wire", async (t) => {
   }
   // The whitespace-only system text is dropped, the fixed instructions stay.
   const systemParts = requests[0].request.systemInstruction.parts;
-  assert.equal(systemParts.length, 3);
+  assert.equal(systemParts.length, 2);
   for (const part of systemParts) assert.ok(part.text.trim().length > 0);
   assert.equal(contents[0].role, "user");
   assert.equal(contents[contents.length - 1].role, "user");
   assert.ok(contents.some((entry) => entry.parts.some((part) => part.text === "real question")));
+});
+
+test("the wire system prompt never reproduces the backend-throttled Antigravity persona", async (t) => {
+  // The backend answers 429 RESOURCE_EXHAUSTED to any request whose
+  // systemInstruction contains the official Antigravity persona pair, which the
+  // pool then misreports as quota exhaustion. Our own prompt must be sent
+  // instead, and a user system prompt must still be appended after it.
+  const { requests } = await runRequest(t, {
+    modelId: "gemini-4-hydrogen",
+    messages: [{ role: "user", content: "hello" }],
+    options: { system: "answer in Chinese" },
+  });
+  const instruction = requests[0].request.systemInstruction;
+  const joined = instruction.parts.map((part) => part.text).join("\n");
+  assert.ok(!/Antigravity, a powerful agentic AI coding assistant/i.test(joined), "the official persona must not be replayed");
+  assert.ok(!/pair programming with a user to solve coding tasks/i.test(joined), "the throttled persona pair must not be replayed");
+  assert.ok(!/\[ignore\]/.test(joined), "the old [ignore] wrapper duplicated the persona and must be gone");
+  assert.match(joined, /agentic coding assistant running inside DeepSeek Harness/i);
+  assert.match(joined, /NEVER output rule checks/i);
+  assert.equal(instruction.parts[instruction.parts.length - 1].text, "answer in Chinese");
 });
 
 test("a role:tool result answers the call in the very next turn", async (t) => {
@@ -309,4 +334,48 @@ test("liveness probe uses a text model when only image generation is enabled", a
   });
   assert.equal(requests[0].model, "gemini-3.8-flash-low");
   assert.equal(requests[0].request.generationConfig.maxOutputTokens, 1);
+});
+
+test("stream captures top-level traceId/metadata and response.modelVersion/responseId for the doctor", async (t) => {
+  // Live chunk shape (2026-11 daily endpoint): {response:{…,modelVersion,responseId},traceId,metadata}
+  const frame = {
+    traceId: "4cb9b31a56283a07",
+    metadata: {},
+    response: {
+      candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }],
+      modelVersion: "gemini-4-hydrogen",
+      responseId: "YLf2apXhOZOujuMP5eae4Q8",
+    },
+  };
+  await runRequest(t, { frames: `data:${JSON.stringify(frame)}\n\n` });
+  const diagnostics = getAntigravityDiagnostics();
+  assert.equal(diagnostics.traceId, "4cb9b31a56283a07");
+  assert.equal(diagnostics.modelVersion, "gemini-4-hydrogen");
+  assert.equal(diagnostics.responseId, "YLf2apXhOZOujuMP5eae4Q8");
+  const doctor = doctorText();
+  assert.match(doctor, /^lastTraceId=4cb9b31a56283a07$/m);
+  assert.match(doctor, /^lastModelVersion=gemini-4-hydrogen$/m);
+  assert.match(doctor, /^lastResponseId=YLf2apXhOZOujuMP5eae4Q8$/m);
+});
+
+test("an SSE error frame after a chunk quotes the captured traceId and classifies as quota", async (t) => {
+  const body = [
+    `data:${JSON.stringify({
+      traceId: "trace-abc123",
+      response: { candidates: [{ content: { parts: [{ text: "partial" }] } }] },
+    })}`,
+    "",
+    `data:${JSON.stringify({ error: { message: "429 RESOURCE_EXHAUSTED: Individual quota reached" } })}`,
+    "",
+    "",
+  ].join("\n");
+  await assert.rejects(
+    runRequest(t, { response: new Response(body, { headers: { "content-type": "text/event-stream" } }) }),
+    (error) => {
+      assert.equal(error.code, "QUOTA", `in-band 429 must stay a quota failure (got ${error.code})`);
+      assert.match(error.message, /Trace: trace-abc123/);
+      assert.match(error.message, /429 RESOURCE_EXHAUSTED/);
+      return true;
+    },
+  );
 });

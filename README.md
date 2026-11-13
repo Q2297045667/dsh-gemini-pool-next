@@ -239,6 +239,7 @@ HTTPS_PROXY=http://127.0.0.1:7897
 
 | 模型 | 思考等级 | 额度池 |
 |---|---|---|
+| **Gemini 4 Hydrogen**（最新 Gemini 4 旗舰） | Low / Medium / High / **XHigh** | Gemini 大池（仅 daily 端点通告该模型族） |
 | **Gemini 4 Argon**（Pro 会员旗舰） | Low / Medium / High | Gemini 4 Argon（Pro 独立额度；Ultra 并入 Gemini 大池） |
 | **Gemini 4 Carbon**（Ultra 专属） | Low / Medium / High | Gemini 4 Argon（独立额度组）；Pro 账号后端只通告禁用占位实体，目录标记为「账号不可用」 |
 | Gemini 3.8 Flash | Minimal / Low / Medium / High | Gemini |
@@ -259,6 +260,22 @@ HTTPS_PROXY=http://127.0.0.1:7897
 **可用的模型与思考等级都以账号实际通告的实体为准。** 插件登录后拉取该账号的 `fetchAvailableModels`，只启用后端真正通告的实体：账号没有的模型在设置页显示「账号不可用」且不会被勾选。若已保存的会话仍指向这类模型，请求会自动降级到池内最合适的可用模型，而不是把请求发到一个后端从未通告的实体上——后者正是 `Requested entity was not found`（404）的来源。
 
 思考等级同样来自真实实体：Gemini 4 Argon 与 Claude 5.5 都是「一档一个实体」（`gemini-4-argon-low/medium/high`、`claude-*-5-5-low/medium/high`），因此选级就是在选实体 id，不再额外附带思考参数；Gemini 3.8 Flash 另有 rollout 期的 tiered 实体，仅当账号只通告它时才经 `thinkingConfig.thinkingLevel` 表达等级，被后端拒绝时自动降一档重试而不是整条请求失败。
+
+**端点（endpoint）按能力路由。** Antigravity 有三条通道：`daily-cloudcode-pa.googleapis.com`（Antigravity 客户端实际使用的 daily 通道，**新模型只在这里通告**，例如 Gemini 4 Hydrogen）、`cloudcode-pa.googleapis.com`（production）与 `daily-cloudcode-pa.sandbox.googleapis.com`。目录 / 额度 / 流式请求按 daily → production → sandbox 尝试，onboarding 与项目发现保持 production → sandbox（daily 不提供 `listCloudAICompanionProjects`）。某个端点为某方法返回 HTML 路由页时视为「该端点不提供此方法」，直接跳到下一个并记住（进程内有界缓存）；若一条流的 429 是全端点一致，才按额度/限流处理并冷却账号。响应里的 `traceId` / `responseId` / `modelVersion` 会记录进 `/antigravity-doctor`（`lastTraceId=` 等），报错时一并给出。
+
+**报错按真实原因分类，不再只有一句 `Antigravity API error`。** 插件会结构化解析云端返回（Google RPC 的 `BadRequest.fieldViolations`、`ErrorInfo`、`RetryInfo`、`QuotaFailure`，以及被二次编码的 JSON、纯文本、HTML 页面、SSE 流内错误），输出一条能直接行动的错误：真实原因 + 出问题的模型/实体 + 端点 + 后端原文（脱敏截断）+ 被拒绝的字段 + `Trace:` + `Next:` 建议。典型分类：
+
+| 类别 | 例子（首行） | 建议 |
+|---|---|---|
+| 额度耗尽 `QUOTA_EXCEEDED` | `Antigravity quota exhausted for entity "gemini-4-hydrogen-high" (model "gemini-4-hydrogen") on daily-cloudcode-pa.googleapis.com (HTTP 429 RESOURCE_EXHAUSTED)` | 等额度窗口 / 换模型或账号 / 加账号；账号自动冷却轮转 |
+| 限流 `RATE_LIMIT` | `Antigravity rate limited the request for model "…" … HTTP 429 TOO_MANY_REQUESTS` | 约 N 秒后重试，池内自动换号 |
+| 模型不存在 `MODEL_NOT_FOUND` | `Antigravity did not find entity "…" (model "…") on … (HTTP 404 NOT_FOUND)` | 目录可能过期或该套餐不支持 → `/antigravity-quota` 重新发现，或换模型 |
+| 请求非法 `INVALID_REQUEST` | `Antigravity rejected the request … HTTP 400 INVALID_ARGUMENT` + `Rejected field: request.generation_config.thinking_config.thinking_level — …` | 按字段说明修正（如思考等级、工具 schema） |
+| 认证/权益 `AUTH` | `Antigravity rejected the account credentials … HTTP 401 UNAUTHENTICATED` | `/antigravity-login`，或确认账号套餐是否包含该模型 |
+| 后端容量/故障 `SERVER` / `OVERLOADED` | `Antigravity is out of capacity for model "…" (HTTP 503 UNAVAILABLE)` | 稍后重试或换模型（不是你的额度问题） |
+| 端点不支持 `ENDPOINT_UNSUPPORTED` | `no Antigravity endpoint served the catalog request …; tried: …` | 检查 `ANTIGRAVITY_BASE_URL` / 网络代理 |
+
+**系统提示词改为插件自有版本。** 后端会对「Antigravity 官方人格提示词」做指纹识别：请求的系统提示词里若出现官方那句 `You are pair programming with a user to solve coding tasks. Be concise, practical, and tool-aware.`（及其组合），无论端点与模型都会直接回 429 `RESOURCE_EXHAUSTED`，账号池会把它当成额度耗尽进而冷却/禁用账号。现在插件发送自己的中性指令（`You are an agentic coding assistant running inside DeepSeek Harness…`），保留「不要输出规则检查/thinking 前言」的约束，实测 daily 端点带不带工具都返回 200 了。
 
 ## 🧭 架构
 

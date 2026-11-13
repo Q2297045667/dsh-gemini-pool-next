@@ -234,6 +234,7 @@ Tick a model in Settings to enable it. Enabled models float to the top, each sho
 
 | Model | Thinking levels | Quota pool |
 |---|---|---|
+| **Gemini 4 Hydrogen** (newest Gemini 4 flagship) | Low / Medium / High / **XHigh** | Main Gemini pool (only the daily endpoint advertises this family) |
 | **Gemini 4 Argon** (Pro flagship) | Low / Medium / High | Gemini 4 Argon (separate Pro quota; folded into the main Gemini pool on Ultra) |
 | **Gemini 4 Carbon** (Ultra only) | Low / Medium / High | Gemini 4 Argon bucket; on Pro accounts the backend only advertises a disabled placeholder, so the catalog marks it unavailable |
 | Gemini 3.8 Flash | Minimal / Low / Medium / High | Gemini |
@@ -254,6 +255,22 @@ The quota bars in Settings follow the backend's own quota groups: platform-level
 **Availability and thinking levels follow the backend entities the account really advertises.** After sign-in the plugin reads that account's `fetchAvailableModels` catalog and enables only the entities it serves; a model the account does not advertise shows the "unavailable on this account" badge and is not enabled. A session that still selects one of those models is served by the best available model in the pool instead of sending a request for an entity the backend never advertised — which is exactly what produced `Requested entity was not found` (404).
 
 Thinking levels come from those same entities: Gemini 4 Argon and Claude 5.5 are one entity per level (`gemini-4-argon-low/medium/high`, `claude-*-5-5-low/medium/high`), so selecting a level selects an entity id rather than sending extra thinking options. Gemini 3.8 Flash additionally advertises a rollout-era tiered entity; it only carries `thinkingConfig.thinkingLevel` when it is the sole entity an account offers, and a rejected level steps down instead of failing the request.
+
+**Endpoints are routed by capability.** Antigravity exposes three hosts: `daily-cloudcode-pa.googleapis.com` (the daily channel the Antigravity client actually uses — **new models are advertised only here**, e.g. Gemini 4 Hydrogen), `cloudcode-pa.googleapis.com` (production) and `daily-cloudcode-pa.sandbox.googleapis.com`. Catalog / quota / streaming try daily → production → sandbox; onboarding and project discovery keep production → sandbox (daily does not serve `listCloudAICompanionProjects`). An HTML routing page for a method means "this endpoint does not serve it": the request skips to the next host and remembers it in a bounded in-process cache. A 429 only counts as quota/rate-limit (and cools the account down) when every endpoint agrees. Response identity — `traceId` / `responseId` / `modelVersion` — is recorded in `/antigravity-doctor` (`lastTraceId=`, …) and quoted in error reports.
+
+**Failures are classified by their real cause, not one generic `Antigravity API error`.** The plugin parses the cloud response structurally (Google RPC `BadRequest.fieldViolations`, `ErrorInfo`, `RetryInfo`, `QuotaFailure`, plus double-encoded JSON, plain text, HTML pages and in-band SSE errors) and emits one actionable error: cause + model/entity + endpoint + redacted backend excerpt + rejected field + `Trace:` + a `Next:` hint. Classes:
+
+| Class | Example first line | Next |
+|---|---|---|
+| `QUOTA_EXCEEDED` | `Antigravity quota exhausted for entity "gemini-4-hydrogen-high" (model "gemini-4-hydrogen") on daily-cloudcode-pa.googleapis.com (HTTP 429 RESOURCE_EXHAUSTED)` | wait for the window / switch model or account / add an account; the pool cools down and rotates |
+| `RATE_LIMIT` | `Antigravity rate limited the request for model "…" … HTTP 429 TOO_MANY_REQUESTS` | retry in ~N s; the pool rotates automatically |
+| `MODEL_NOT_FOUND` | `Antigravity did not find entity "…" (model "…") on … (HTTP 404 NOT_FOUND)` | stale catalog or plan does not serve the model → `/antigravity-quota` to re-discover, or switch model |
+| `INVALID_REQUEST` | `Antigravity rejected the request … HTTP 400 INVALID_ARGUMENT` + `Rejected field: request.generation_config.thinking_config.thinking_level — …` | fix the named field (thinking level, tool schema, …) |
+| `AUTH` | `Antigravity rejected the account credentials … HTTP 401 UNAUTHENTICATED` | `/antigravity-login`, or check whether the plan includes the model |
+| `SERVER` / `OVERLOADED` | `Antigravity is out of capacity for model "…" (HTTP 503 UNAVAILABLE)` | retry later or switch model (not your quota) |
+| `ENDPOINT_UNSUPPORTED` | `no Antigravity endpoint served the catalog request …; tried: …` | check `ANTIGRAVITY_BASE_URL` / the network proxy |
+
+**The system prompt is now plugin-owned.** The backend fingerprints the official Antigravity persona: a request whose system instruction contains `You are pair programming with a user to solve coding tasks. Be concise, practical, and tool-aware.` (and its combinations) is answered with 429 `RESOURCE_EXHAUSTED` on every endpoint and model, which the pool then mistakes for quota exhaustion and uses to cool down/disable accounts. The plugin now sends its own neutral instruction (`You are an agentic coding assistant running inside DeepSeek Harness…`) and keeps the no-preamble rule; measured 200 on the daily endpoint with and without tools.
 
 ## 🧭 Architecture
 

@@ -112,3 +112,26 @@ for (const rejection of [401, 403]) {
     assert.equal(loginResponse.statusCode, rejection);
   });
 }
+
+// Response identity (traceId/modelVersion/responseId, captured from the newest
+// stream chunk) and the structured last-error fields let a support report quote
+// the exact backend request without re-running it. Existing keys stay stable.
+test("doctor output exposes response identity and structured last-error fields", () => {
+  const text = doctorText();
+  for (const key of [
+    "lastTraceId",
+    "lastModelVersion",
+    "lastResponseId",
+    "lastResponseMetadata",
+    "errorCode",
+    "errorGrpcStatus",
+    "errorEndpoint",
+    "errorTraceId",
+    "errorRetryAfterMs",
+  ]) {
+    assert.match(text, new RegExp(`^${key}=`, "m"), `doctor must expose ${key}`);
+  }
+  for (const key of ["lastEndpoint", "lastStatus", "lastProjectId", "lastError"]) {
+    assert.match(text, new RegExp(`^${key}=`, "m"), `existing doctor key ${key} must stay`);
+  }
+});

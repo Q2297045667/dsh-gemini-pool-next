@@ -5,7 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AccountPoolManager } from "../lib/pool.js";
-import { AntigravityPoolAdapter, generateImageThroughPool } from "../lib/index.js";
+import {
+  AntigravityPoolAdapter,
+  doctorText,
+  fetchQuotaForAccount,
+  generateImageThroughPool,
+  getAntigravityDiagnostics,
+  resetEndpointCapabilityCache,
+} from "../lib/index.js";
 
 const SSE = (...lines) => lines.map((l) => `data: ${l}\n\n`).join("");
 
@@ -254,6 +261,368 @@ test("mid-stream 429 after a chunk still marks cooldown but does not failover", 
     assert.ok(first.cooldownRemainingMs > 0, "mid-stream 429 must open a cooldown window");
     assert.equal(streamRequests, 1, "must not fail over to the second account mid-stream");
   } finally {
+    await cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Endpoint capability routing and precise failure classification.
+//
+// Live 2026-11 evidence: the daily channel serves catalog/quota/stream (and the
+// new Gemini 4 Hydrogen entities) while production currently answers stream
+// requests with 429; production keeps project discovery because the daily
+// channel answers listCloudAICompanionProjects with an HTML 404 page.
+// ---------------------------------------------------------------------------
+
+const ENDPOINT = {
+  daily: "https://daily-cloudcode-pa.googleapis.com",
+  production: "https://cloudcode-pa.googleapis.com",
+  sandbox: "https://daily-cloudcode-pa.sandbox.googleapis.com",
+};
+
+/** Real Google RPC envelopes captured from the live backend. */
+const LIVE_NOT_FOUND = JSON.stringify({
+  error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" },
+});
+const LIVE_INVALID_THINKING = JSON.stringify({
+  error: {
+    code: 400,
+    message:
+      'Invalid value at \'request.generation_config.thinking_config.thinking_level\' "ULTRA"',
+    status: "INVALID_ARGUMENT",
+    details: [
+      {
+        "@type": "type.googleapis.com/google.rpc.BadRequest",
+        fieldViolations: [
+          {
+            field: "request.generation_config.thinking_config.thinking_level",
+            description: 'Invalid value at \'...thinking_level\' "ULTRA"',
+          },
+        ],
+      },
+    ],
+  },
+});
+const LIVE_EXHAUSTED = JSON.stringify({
+  error: { code: 429, message: "Resource has been exhausted (e.g. check quota).", status: "RESOURCE_EXHAUSTED" },
+});
+const HTML_404 = "<!DOCTYPE html>\n<html><title>Error 404 (Not Found)!!1</title></html>";
+
+function hostOf(url) {
+  return new URL(String(url)).host;
+}
+
+function streamHosts(calls) {
+  return calls.filter((call) => String(call.url).includes(":streamGenerateContent")).map((call) => hostOf(call.url));
+}
+
+function sseTextResponse(text = "hello") {
+  return sseResponse(SSE(textChunk(text)));
+}
+
+async function collectStream(adapter, model = "gemini-3.8-flash") {
+  const chunks = [];
+  for await (const chunk of adapter.stream({
+    model,
+    messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+  })) {
+    chunks.push(chunk);
+  }
+  return chunks;
+}
+
+/** In-memory model-settings store covering the calls the quota path makes. */
+function memoryModelSettings(initial = {}) {
+  let state = { catalogModels: [], enabledModelIds: [], updatedAt: 0, ...initial };
+  const persist = (next) => {
+    if (next !== undefined) state = { ...next, updatedAt: Date.now() };
+    return state;
+  };
+  return {
+    async read() {
+      return state;
+    },
+    async write(next) {
+      return persist(next);
+    },
+    async modify(fn) {
+      return persist(await fn(state));
+    },
+  };
+}
+
+test("capability routing prefers daily for catalog/quota/stream and production for discovery", async () => {
+  resetEndpointCapabilityCache();
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await addAccount(manager, "routing@example.com");
+    const account = manager.allAccounts[0];
+    const settings = memoryModelSettings();
+    await withStubbedFetch(
+      (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith(":loadCodeAssist")) return Response.json({ cloudaicompanionProject: "project-routing" });
+        if (path.endsWith(":retrieveUserQuotaSummary")) return Response.json({ groups: [] });
+        if (path.endsWith(":fetchAvailableModels")) {
+          return Response.json({ models: { "gemini-3.8-flash-low": {} } });
+        }
+        return sseTextResponse();
+      },
+      async (calls) => {
+        await fetchQuotaForAccount(account, manager, settings);
+        await collectStream(new AntigravityPoolAdapter(manager, settings, () => undefined));
+        const firstOf = (suffix) => {
+          const call = calls.find((entry) => String(entry.url).includes(suffix));
+          return call ? hostOf(call.url) : undefined;
+        };
+        assert.equal(firstOf(":loadCodeAssist"), hostOf(ENDPOINT.production), "discovery must start on production");
+        assert.equal(firstOf(":retrieveUserQuotaSummary"), hostOf(ENDPOINT.daily), "quota must start on daily");
+        assert.equal(firstOf(":fetchAvailableModels"), hostOf(ENDPOINT.daily), "catalog must start on daily");
+        assert.equal(streamHosts(calls)[0], hostOf(ENDPOINT.daily), "stream must start on daily");
+      },
+    );
+  } finally {
+    resetEndpointCapabilityCache();
+    await cleanup();
+  }
+});
+
+test("an endpoint that answers HTML 404 is skipped and not retried by later calls", async () => {
+  resetEndpointCapabilityCache();
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await addAccount(manager, "route-miss@example.com");
+    const adapter = new AntigravityPoolAdapter(manager, modelSettings(), () => undefined);
+    await withStubbedFetch(
+      (url) => {
+        if (isDiscoveryRequest(url)) return discoveryResponse();
+        return String(url).startsWith(ENDPOINT.daily)
+          ? new Response(HTML_404, { status: 404, headers: { "content-type": "text/html" } })
+          : sseTextResponse();
+      },
+      async (calls) => {
+        const chunks = await collectStream(adapter);
+        assert.ok(chunks.some((chunk) => chunk.type === "finish"), "the call must succeed on the next endpoint");
+        assert.deepEqual(streamHosts(calls), [hostOf(ENDPOINT.daily), hostOf(ENDPOINT.production)]);
+
+        // The dead route is remembered: the second call never pays for it again.
+        const before = calls.length;
+        await collectStream(adapter);
+        const retried = calls.slice(before).filter((call) => String(call.url).includes(":streamGenerateContent"));
+        assert.deepEqual(retried.map((call) => hostOf(call.url)), [hostOf(ENDPOINT.production)]);
+      },
+    );
+  } finally {
+    resetEndpointCapabilityCache();
+    await cleanup();
+  }
+});
+
+test("a JSON 404 entity-not-found becomes MODEL_NOT_FOUND with model/entity/endpoint context", async () => {
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await addAccount(manager, "notfound@example.com");
+    const adapter = new AntigravityPoolAdapter(manager, modelSettings(), () => undefined);
+    await withStubbedFetch(
+      (url) => (isDiscoveryRequest(url) ? discoveryResponse() : errorResponse(404, LIVE_NOT_FOUND)),
+      async () => {
+        await assert.rejects(() => collectStream(adapter), (error) => {
+          assert.equal(error.code, "MODEL_NOT_FOUND", `got code ${error.code}: ${error.message}`);
+          assert.match(error.message, /did not find entity "gemini-\d/);
+          assert.match(error.message, /model "gemini-3\.8-flash"/);
+          assert.match(error.message, /\.googleapis\.com/);
+          assert.match(error.message, /Backend said: Requested entity was not found\./);
+          assert.match(error.message, /catalog may be stale|switch model/);
+          assert.match(error.message, /^Next: /m);
+          return true;
+        });
+      },
+    );
+    // The structured failure is recorded for /antigravity-doctor.
+    const diagnostics = getAntigravityDiagnostics();
+    assert.equal(diagnostics.errorCode, "MODEL_NOT_FOUND");
+    assert.match(diagnostics.errorEndpoint, /cloudcode-pa\.(sandbox\.)?googleapis\.com$/);
+    assert.match(doctorText(), /^errorCode=MODEL_NOT_FOUND$/m);
+    assert.match(doctorText(), /^errorEndpoint=https:\/\/(daily-)?cloudcode-pa/m);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a 400 BadRequest field violation becomes INVALID_REQUEST naming the rejected field", async () => {
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await addAccount(manager, "invalid@example.com");
+    const adapter = new AntigravityPoolAdapter(manager, modelSettings(), () => undefined);
+    await withStubbedFetch(
+      (url) => (isDiscoveryRequest(url) ? discoveryResponse() : errorResponse(400, LIVE_INVALID_THINKING)),
+      async () => {
+        await assert.rejects(() => collectStream(adapter), (error) => {
+          assert.equal(error.code, "INVALID_REQUEST", `got code ${error.code}: ${error.message}`);
+          assert.match(error.message, /request\.generation_config\.thinking_config\.thinking_level/);
+          assert.match(error.message, /Rejected field: request\.generation_config\.thinking_config\.thinking_level — /);
+          assert.match(error.message, /thinking level is not supported/);
+          return true;
+        });
+      },
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a 429 resource-exhausted body classifies as quota and still marks one cooldown", async () => {
+  const { manager, cleanup } = await createTempManager();
+  try {
+    const accountId = await addAccount(manager, "quota-class@example.com");
+    await manager.updateConfig({ cooldownMs: 1000, disableThreshold: 5 });
+    const cooldowns = spyPool(manager);
+    const adapter = new AntigravityPoolAdapter(manager, modelSettings(), () => undefined);
+    await withStubbedFetch(
+      (url) => (isDiscoveryRequest(url) ? discoveryResponse() : errorResponse(429, LIVE_EXHAUSTED)),
+      async () => {
+        await assert.rejects(() => collectStream(adapter), (error) => {
+          assert.equal(error.code, "QUOTA", `quota semantics must not regress (got ${error.code})`);
+          assert.match(error.message, /quota exhausted/);
+          assert.match(error.message, /Resource has been exhausted \(e\.g\. check quota\)/);
+          return true;
+        });
+      },
+    );
+    assert.equal(cooldowns.length, 1, `one cooldown per failed request (got ${cooldowns.length})`);
+    assert.equal(cooldowns[0].id, accountId);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a 429 without quota evidence classifies as RATE_LIMIT and surfaces its delay", async () => {
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await addAccount(manager, "ratelimit@example.com");
+    await manager.updateConfig({ cooldownMs: 1000, disableThreshold: 5 });
+    const cooldowns = spyPool(manager);
+    const adapter = new AntigravityPoolAdapter(manager, modelSettings(), () => undefined);
+    const body = JSON.stringify({
+      error: {
+        code: 429,
+        status: "TOO_MANY_REQUESTS",
+        message: "Rate limit exceeded for this endpoint.",
+        details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "6s" }],
+      },
+    });
+    await withStubbedFetch(
+      (url) => (isDiscoveryRequest(url) ? discoveryResponse() : errorResponse(429, body)),
+      async () => {
+        await assert.rejects(() => collectStream(adapter), (error) => {
+          assert.equal(error.code, "RATE_LIMIT", `got code ${error.code}: ${error.message}`);
+          assert.match(error.message, /rate limited/);
+          assert.match(error.message, /~6s/);
+          assert.equal(error.retryAfterMs, 6000);
+          return true;
+        });
+      },
+    );
+    // A 429 that is not quota exhaustion still cools the account down, so the
+    // pool's cooldown/backoff ladder keeps working.
+    assert.equal(cooldowns.length, 1);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("every endpoint answering HTML surfaces ENDPOINT_UNSUPPORTED naming the routes, without cooldowns", async () => {
+  resetEndpointCapabilityCache();
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await addAccount(manager, "html@example.com");
+    await manager.updateConfig({ cooldownMs: 1000, disableThreshold: 5 });
+    const cooldowns = spyPool(manager);
+    const adapter = new AntigravityPoolAdapter(manager, modelSettings(), () => undefined);
+    await withStubbedFetch(
+      (url) =>
+        isDiscoveryRequest(url)
+          ? discoveryResponse()
+          : new Response(HTML_404, { status: 404, headers: { "content-type": "text/html" } }),
+      async (calls) => {
+        await assert.rejects(() => collectStream(adapter), (error) => {
+          assert.equal(error.code, "ENDPOINT_UNSUPPORTED", `got code ${error.code}: ${error.message}`);
+          for (const endpoint of Object.values(ENDPOINT)) {
+            assert.match(error.message, new RegExp(hostOf(endpoint).replace(/\./g, "\\.")));
+          }
+          assert.match(error.message, /HTML page/);
+          return true;
+        });
+        assert.ok(streamHosts(calls).length >= 3, "every capability endpoint must be tried");
+      },
+    );
+    assert.equal(cooldowns.length, 0, "a routing page is not a quota failure and must not cool the account down");
+    const account = manager.allAccounts[0];
+    assert.equal(account.failureCount, 0);
+  } finally {
+    resetEndpointCapabilityCache();
+    await cleanup();
+  }
+});
+
+test("a 429 that is not an individual quota continues to the next endpoint", async () => {
+  resetEndpointCapabilityCache();
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await addAccount(manager, "endpoint-retry@example.com");
+    const adapter = new AntigravityPoolAdapter(manager, modelSettings(), () => undefined);
+    await withStubbedFetch(
+      (url) => {
+        if (isDiscoveryRequest(url)) return discoveryResponse();
+        // The live production endpoint currently answers every stream request
+        // with 429 while the daily endpoint serves the same model — the daily
+        // 429 must not abort the endpoint walk.
+        if (String(url).startsWith(ENDPOINT.daily)) return errorResponse(429, LIVE_EXHAUSTED);
+        return sseTextResponse();
+      },
+      async (calls) => {
+        const chunks = await collectStream(adapter);
+        assert.ok(chunks.some((chunk) => chunk.type === "finish"));
+        assert.deepEqual(streamHosts(calls), [hostOf(ENDPOINT.daily), hostOf(ENDPOINT.production)]);
+      },
+    );
+  } finally {
+    resetEndpointCapabilityCache();
+    await cleanup();
+  }
+});
+
+test("an individual quota stops the endpoint walk because the account, not the route, is out", async () => {
+  resetEndpointCapabilityCache();
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await addAccount(manager, "individual@example.com");
+    await manager.updateConfig({ cooldownMs: 1000, disableThreshold: 5 });
+    const adapter = new AntigravityPoolAdapter(manager, modelSettings(), () => undefined);
+    const individual = JSON.stringify({
+      error: {
+        code: 429,
+        message: "Individual quota reached for this account.",
+        status: "RESOURCE_EXHAUSTED",
+      },
+    });
+    await withStubbedFetch(
+      (url) => (isDiscoveryRequest(url) ? discoveryResponse() : errorResponse(429, individual)),
+      async (calls) => {
+        await assert.rejects(() => collectStream(adapter), (error) => {
+          assert.equal(error.code, "QUOTA");
+          assert.match(error.message, /Individual quota reached/);
+          return true;
+        });
+        assert.deepEqual(
+          [...new Set(streamHosts(calls))],
+          [hostOf(ENDPOINT.daily)],
+          "an individual quota must not spend requests on the remaining endpoints",
+        );
+      },
+    );
+  } finally {
+    resetEndpointCapabilityCache();
     await cleanup();
   }
 });
