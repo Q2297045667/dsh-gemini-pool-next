@@ -221,11 +221,11 @@ HTTPS_PROXY=http://127.0.0.1:7897
 
 **默认模型要指向本插件的 provider**：本插件自己的 profile 补丁已把 `agent-default-model` 的 `provider` 写成 `antigravity-pool`。如果你是从旧版本升级上来、默认模型仍写着 `provider: antigravity`，会落到上游插件（它可能没有 Gemini 4 Argon 等新模型），请改 `~/.dsh/profiles/web/cordis.patch.yml` 里的 `agent-default-model` 段，或直接在设置页重选模型。
 
-**决策是确定性的**：插件加载顺序在 DSH 里是并发竞速的，只看「provider 是否已被注册」会漏判，所以本插件还会读 loader 的 entry 列表——只要配置里存在启用的 `dsh-gemini-pool` 就先让位；你也可以用环境变量或插件 config 强制指定：`ANTIGRAVITY_PROVIDER_ID` / `ANTIGRAVITY_COEXIST_PROVIDER_ID` / `ANTIGRAVITY_PROVIDER_NAME`（对应 config 键 `providerId` / `coexistProviderId` / `providerName`）。启动日志会打印一行 `[Antigravity Pool] provider "antigravity" is already taken ... (coexist mode; decided by ...)`，`/antigravity-doctor` 也会显示 `provider=` / `coexistMode=`。
+**决策是确定性的**：插件加载顺序在 DSH 里是并发竞速的，只看「provider 是否已被注册」会漏判，所以本插件还会读 loader 的 entry 列表——只要配置里存在启用的 `dsh-gemini-pool` 就先让位；你也可以用环境变量或插件 config 强制指定：`ANTIGRAVITY_PROVIDER_ID` / `ANTIGRAVITY_COEXIST_PROVIDER_ID` / `ANTIGRAVITY_PROVIDER_NAME`（对应 config 键 `providerId` / `coexistProviderId` / `providerName`）。启动日志会打印一行 `[Antigravity Pool] provider "antigravity" is already taken ... (coexist mode; decided by ...)`，`/antigravity-doctor` 也会显示 `provider=` / `coexistMode=` / `imageToolOwner=`。
 
 **已知取舍**：
 - 两个插件各自保存一份**相同账号**的凭证副本；不要在两边同时重新登录同一个 Google 账号（refresh token 轮换后另一边的旧副本会失效），日常用量在一边登录即可。
-- `antigravity_image_generate` 工具名两边相同，先注册的那个生效；本插件独有的 `antigravity_read_image` 始终可用。
+- `antigravity_image_generate` 工具名两边相同：共存时**固定归上游**（同样按 loader entry 判定，不看启动竞速），本插件不再重复注册，也不会再在启动日志里抛重名异常；本插件独有的 `antigravity_read_image` 始终可用。可用 `/antigravity-doctor` 的 `imageToolOwner=` 确认当前生效的是谁（`pool` = 本插件，`upstream:dsh-gemini-pool` = 上游）；想让本插件的生图工具接管，把上游 entry 禁用/卸载即可（下一行「已知取舍」同理）。
 - 命令行 `antigravity-login` 是独立进程，默认写「非共存」命名空间；共存模式下请用设置页里 Antigravity Pool 卡片的登录流程。
 
 ## 🤖 模型一览

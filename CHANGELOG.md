@@ -2,6 +2,15 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.13.1 — 2026-11-16
+
+### Fixed
+- **共存时生图工具的重名判定改为确定性**：上游 `dsh-gemini-pool` 与本插件都注册 `antigravity_image_generate`，tools 注册表对重名抛错。此前只在注册前查 `tools.view()`，但 DSH 的 loader 在同一个 `Promise.all` 里创建所有 entry——注册表快照可能还是空的，于是每次启动都会先撞上 `Error: tool "antigravity_image_generate" is already registered`，把一句预期内的共存结果打成带堆栈的警告（哪家胜出还取决于竞速）。现在与 provider 同一套规则：apply() 里读一次 loader entry 列表，只要存在启用的 `dsh-gemini-pool`，该工具就归上游、本插件不再尝试注册（直接打印一行 `[Antigravity Pool] the upstream "dsh-gemini-pool" plugin already provides the "antigravity_image_generate" tool; keeping it and skipping ours (image tool)`）。注册表预检与「输掉竞速」的兜底仍保留，但都只打一行说明、不再当错误
+- **`/antigravity-doctor` 新增 `imageToolOwner=`**：`pool` = 本插件、`upstream:dsh-gemini-pool` = 上游、`other-plugin` / `unavailable` / `failed` 覆盖其余情形；重复 apply 时按本次结果重置，不会残留上一个实例的归属
+
+### 验证
+- `npm run check` 全量 **317/317**（v0.13.0 基线 316 + 1 条 loader-entry 归属测试）：新增测试构造「loader 里上游 entry 启用、但 tools 注册表仍为空」的启动快照——修复前该场景会注册自己的 `antigravity_image_generate`（即线上日志里那条警告的成因），修复后只注册 `antigravity_read_image`、日志只有一行说明、`imageToolOwner=upstream:dsh-gemini-pool`；原有三条路径（tools view 预检命中 / 无 view 时靠重名异常兜底 / 无上游时两个工具都注册）同步断言 `imageToolOwner`
+
 ## v0.13.0 — 2026-11-13
 
 ### Added

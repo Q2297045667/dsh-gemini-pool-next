@@ -491,6 +491,7 @@ test("a duplicate image tool name drops only that tool, never the vision tool", 
   apply(host.ctx);
   await host.ready();
   assert.deepEqual(registered.map((tool) => tool.name), ["antigravity_read_image"]);
+  assert.match(doctorText(), /^imageToolOwner=other-plugin$/m);
 
   // Without a view API the registry duplicate error is caught per tool.
   const blindTaken = new Set(["antigravity_image_generate"]);
@@ -507,6 +508,7 @@ test("a duplicate image tool name drops only that tool, never the vision tool", 
   apply(blindHost.ctx);
   await blindHost.ready();
   assert.deepEqual(blindRegistered.map((tool) => tool.name), ["antigravity_read_image"]);
+  assert.match(doctorText(), /^imageToolOwner=other-plugin$/m);
 
   // Normal mode registers both (no duplicate upstream plugin around).
   const normalHost = createHost();
@@ -516,6 +518,39 @@ test("a duplicate image tool name drops only that tool, never the vision tool", 
   assert.deepEqual(
     normalHost.registeredTools.map((tool) => tool.name).sort(),
     ["antigravity_image_generate", "antigravity_read_image"],
+  );
+  assert.match(doctorText(), /^imageToolOwner=pool$/m);
+});
+
+test("the loader entry, not the activation race, decides who owns the image tool", async (t) => {
+  await setupHome(t);
+  // Both plugins apply() inside one Promise.all, so the tools registry can still
+  // be empty when we reach it even though the upstream plugin registers
+  // `antigravity_image_generate` a moment later. The loader entry is the only
+  // deterministic signal, and yielding to it must not first throw a duplicate
+  // registration error (which reached the boot log as a stack trace).
+  const upstreamEntry = {
+    options: { id: "dsh-gemini-pool", name: "dsh-gemini-pool" },
+    disabled: false,
+  };
+  const host = createHost({ loaderEntries: [upstreamEntry] });
+  t.after(() => host.dispose());
+  const logged = [];
+  t.mock.method(console, "log", (...args) => logged.push(args.join(" ")));
+  t.mock.method(console, "warn", (...args) => logged.push(["warn", ...args].join(" ")));
+  apply(host.ctx);
+  await host.ready();
+
+  assert.deepEqual(host.registeredTools.map((tool) => tool.name), ["antigravity_read_image"]);
+  assert.match(doctorText(), /^imageToolOwner=upstream:dsh-gemini-pool$/m);
+  assert.ok(
+    logged.some((line) => line.includes("dsh-gemini-pool") && line.includes("antigravity_image_generate")),
+    `expected a calm line naming the upstream tool owner, got: ${logged.join(" | ")}`,
+  );
+  assert.deepEqual(
+    logged.filter((line) => /deferred|already registered/i.test(line)),
+    [],
+    `the expected coexist skip must not surface as a warning with a stack trace`,
   );
 });
 
