@@ -112,8 +112,13 @@ test("new model routing resolves to the backend-advertised entities", () => {
 
 test("runtime token limits cover the new entities", () => {
   assert.equal(getMaxOutputTokens("gemini-4-argon", "gemini-4-argon-high"), 65536);
-  assert.equal(getMaxOutputTokens("claude-opus-5.5", "claude-opus-5-5-high"), 64000);
-  assert.equal(getMaxOutputTokens("claude-sonnet-5.5", "claude-sonnet-5-5-high"), 64000);
+  // Claude 5.5 entities advertise maxOutputTokens 128000; the backend accepts
+  // that as generationConfig.maxOutputTokens (probed HTTP 200).
+  assert.equal(getMaxOutputTokens("claude-opus-5.5", "claude-opus-5-5-high"), 128000);
+  assert.equal(getMaxOutputTokens("claude-sonnet-5.5", "claude-sonnet-5-5-high"), 128000);
+  for (const level of ["low", "medium", "high"]) {
+    assert.equal(getMaxOutputTokens("claude-opus-5.5", `claude-opus-5-5-${level}`), 128000, level);
+  }
   assert.equal(getMaxOutputTokens("gemini-3.8-flash", "gemini-3.8-flash-medium"), 65536);
 });
 
@@ -307,7 +312,7 @@ test("Gemini 4 Carbon keeps its 262144 output ceiling on every entity", () => {
   }
   // Other models keep their own ceilings.
   assert.equal(getMaxOutputTokens("gemini-4-argon", "gemini-4-argon-high"), 65536);
-  assert.equal(getMaxOutputTokens("claude-opus-5.5", "claude-opus-5-5-high"), 64000);
+  assert.equal(getMaxOutputTokens("claude-opus-5.5", "claude-opus-5-5-high"), 128000);
 });
 
 test("Gemini 4 Carbon matcher and entity splitter recognise live and disabled ids", () => {
@@ -468,7 +473,7 @@ test("Gemini 4 Hydrogen keeps its 262144 output ceiling on every entity", () => 
     assert.equal(getMaxOutputTokens("gemini-4-carbon", runtimeModel), 262144, runtimeModel);
   }
   assert.equal(getMaxOutputTokens("gemini-4-argon", "gemini-4-argon-high"), 65536);
-  assert.equal(getMaxOutputTokens("claude-opus-5.5", "claude-opus-5-5-high"), 64000);
+  assert.equal(getMaxOutputTokens("claude-opus-5.5", "claude-opus-5-5-high"), 128000);
 });
 
 test("Gemini 4 Hydrogen matcher folds all four live entities into one base", () => {
@@ -744,4 +749,33 @@ test("an unknown entity keeps the output ceiling the backend advertises", () => 
   assert.equal(inferModelShape("gemini-9-test", {}).maxTokens, 65536);
   assert.equal(inferModelShape("gemini-9-test", { maxOutputTokens: 0 }).maxTokens, 65536);
   assert.equal(inferModelShape("gemini-9-test", { maxOutputTokens: -5 }).maxTokens, 65536);
+});
+
+test("GPT-OSS carries the catalog's own removal notice", () => {
+  const gpt = modelById("gpt-oss-120b");
+  assert.equal(gpt.deprecated, true);
+  assert.match(gpt.description, /2026-11-30/);
+  // Claude 4.6 has already been removed, so its notice is past tense.
+  for (const id of ["claude-opus-4-6", "claude-sonnet-4-6"]) {
+    assert.match(modelById(id).description, /2026-11-18/);
+    assert.doesNotMatch(modelById(id).description, /will stop working/);
+  }
+  // Nothing still served is marked deprecated.
+  for (const id of ["gemini-4-neon", "gemini-4-argon", "gemini-4-hydrogen", "claude-opus-5.5"]) {
+    assert.equal(modelById(id).deprecated, undefined, id);
+  }
+});
+
+test("Claude 5.5 advertises the 1M context window and 128000 output ceiling", () => {
+  for (const id of ["claude-opus-5.5", "claude-sonnet-5.5"]) {
+    const model = modelById(id);
+    assert.equal(model.contextWindow, 1000000, id);
+    assert.equal(model.maxTokens, 128000, id);
+  }
+  // The image-generation entity is not a 1M-context Gemini text model.
+  assert.equal(modelById("gemini-3.1-flash-image").contextWindow, 65536);
+  // An unknown entity keeps whatever the catalog advertises for both limits.
+  const shape = inferModelShape("gemini-9-quartz-high", { maxTokens: 2000000, maxOutputTokens: 64000 });
+  assert.equal(shape.contextWindow, 2000000);
+  assert.equal(shape.maxTokens, 64000);
 });

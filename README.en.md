@@ -242,8 +242,8 @@ Tick a model in Settings to enable it. Enabled models float to the top, each sho
 | Gemini 3.5 Flash Lite · Gemini 3.1 Flash Lite · Gemini 2.5 Flash Lite | — | Gemini |
 | Gemini 3.1 Flash Image (image gen) | — | Gemini |
 | Gemini 3 Flash · Gemini 2.5 Pro / Flash | — | Gemini |
-| **Claude Opus 5.5** · **Claude Sonnet 5.5** (Pro) | Low / Medium / High | Claude & GPT |
-| Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️ (removed by Antigravity on 2026-11-18) · GPT-OSS 120B | — | Claude & GPT |
+| **Claude Opus 5.5** · **Claude Sonnet 5.5** (Pro; 1M context / 128K output) | Low / Medium / High | Claude & GPT |
+| Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️ (removed by Antigravity on 2026-11-18) · GPT-OSS 120B ⚠️ (2026-11-30 removal) | — | Claude & GPT |
 
 Models in the same pool share the weekly and 5-hour quotas. Quota drains in proportion to token cost, so heavier models run out faster.
 

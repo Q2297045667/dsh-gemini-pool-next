@@ -247,8 +247,8 @@ HTTPS_PROXY=http://127.0.0.1:7897
 | Gemini 3.5 Flash Lite · Gemini 3.1 Flash Lite · Gemini 2.5 Flash Lite | — | Gemini |
 | Gemini 3.1 Flash Image（生图） | — | Gemini |
 | Gemini 3 Flash · Gemini 2.5 Pro / Flash | — | Gemini |
-| **Claude Opus 5.5** · **Claude Sonnet 5.5**（Pro 会员） | Low / Medium / High | Claude & GPT |
-| Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️（2026-11-18 起下架） · GPT-OSS 120B | — | Claude & GPT |
+| **Claude Opus 5.5** · **Claude Sonnet 5.5**（Pro 会员；1M 上下文 / 128K 输出） | Low / Medium / High | Claude & GPT |
+| Claude Opus 4.6 · Claude Sonnet 4.6 ⚠️（2026-11-18 已下架） · GPT-OSS 120B ⚠️（2026-11-30 下架） | — | Claude & GPT |
 
 同一额度池内共享每周与 5 小时额度；额度按 token 成本比例消耗，越重的模型消耗越快。
 

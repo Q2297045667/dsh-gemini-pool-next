@@ -348,3 +348,26 @@ test("adding Hydrogen leaves every other catalog row unchanged", () => {
   }
 });
 
+
+test("the catalog adopts the context window each entity advertises", () => {
+  // Live Claude 5.5 entities advertise maxTokens 1000000 (input) and
+  // maxOutputTokens 128000; the image entity advertises 65536/65536.
+  const catalog = parseCatalogModels(modelsPayload({
+    "claude-opus-5-5-high": { displayName: "Claude Opus 5.5 (High)", maxTokens: 1000000, maxOutputTokens: 128000 },
+    "claude-opus-5-5-low": { displayName: "Claude Opus 5.5 (Low)", maxTokens: 1000000, maxOutputTokens: 128000 },
+    "gemini-3.1-flash-image": { displayName: "Gemini 3.1 Flash Image", maxTokens: 65536, maxOutputTokens: 65536 },
+  }));
+  const opus = catalog.find((model) => model.id === "claude-opus-5.5");
+  assert.equal(opus.contextWindow, 1000000);
+  assert.equal(opus.available, true);
+  // The output ceiling stays the request cap the adapter enforces per family.
+  assert.equal(opus.maxTokens, 128000);
+  const image = catalog.find((model) => model.id === "gemini-3.1-flash-image");
+  assert.equal(image.contextWindow, 65536, "the image entity is not a 1M-context Gemini text model");
+
+  // Without an advertised window the static row stands.
+  const staticOnly = parseCatalogModels(modelsPayload({
+    "gemini-4-argon-high": { displayName: "Gemini 4 Argon (High)" },
+  }));
+  assert.equal(staticOnly.find((model) => model.id === "gemini-4-argon").contextWindow, 1048576);
+});

@@ -411,3 +411,33 @@ test("Gemini 4 Neon dispatches every effort to a real entity with the full outpu
     assert.equal(requests[0].request.generationConfig.maxOutputTokens, 262144, effort);
   }
 });
+
+test("entity discovery is cached per account, so a token refresh does not re-discover", async (t) => {
+  const entities = { "gemini-4-neon-low": {}, "gemini-4-neon-high": {}, "gemini-4-neon-xhigh": {} };
+  let catalogCalls = 0;
+  t.mock.method(globalThis, "fetch", async (url) => {
+    if (String(url).includes(":fetchAvailableModels")) {
+      catalogCalls += 1;
+      return Response.json({ models: entities });
+    }
+    return new Response(`data:${JSON.stringify(textFrame("ok"))}`);
+  });
+  const run = async (tokenInfo) => {
+    const iterator = requestAntigravityChunksWithAccount(
+      { model: "gemini-4-neon", messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] },
+      modelById("gemini-4-neon"),
+      undefined,
+      tokenInfo,
+    );
+    for await (const _chunk of iterator) { /* drain */ }
+  };
+  const account = { projectId: "entity-cache-project", email: "entity-cache@example.com" };
+  await run({ ...account, token: "token-refresh-1" });
+  assert.equal(catalogCalls, 3, "the first request discovers across the three endpoints");
+  // The access token rotates hourly; the entity set belongs to the account.
+  await run({ ...account, token: "token-refresh-2" });
+  assert.equal(catalogCalls, 3, "a rotated token reuses the account's discovery");
+  // A different account still discovers its own catalog.
+  await run({ projectId: "entity-cache-project", email: "other@example.com", token: "token-b" });
+  assert.equal(catalogCalls, 6);
+});

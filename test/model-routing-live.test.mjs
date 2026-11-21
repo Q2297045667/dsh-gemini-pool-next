@@ -53,15 +53,19 @@ async function setup(t, { entities = LIVE_MODELS, failFirst = false } = {}) {
     catalogModels,
     enabledModelIds: catalogModels.filter((model) => model.available).map((model) => model.id),
   });
-  const token = `access_live_${tokenCounter += 1}`;
+  // One account per test: the entity catalog is cached per (account, project),
+  // so two tests that reuse the same account would share a stale discovery.
+  const seq = (tokenCounter += 1);
+  const email = `live${seq}@example.com`;
+  const token = `access_live_${seq}`;
   await pool.addOrUpdateAccount({
-    email: "live@example.com",
+    email,
     access: token,
-    refresh: "refresh_live",
+    refresh: `refresh_live_${seq}`,
     expires: Date.now() + 3600_000,
-    projectId: "project-live",
+    projectId: `project-live-${seq}`,
   });
-  const account = pool.allAccounts.find((entry) => entry.email === "live@example.com");
+  const account = pool.allAccounts.find((entry) => entry.email === email);
   await pool.updateAccountQuota(account.id, { catalogModels }, "Google AI Pro");
 
   const requests = [];

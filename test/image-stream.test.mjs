@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { generateImageThroughPool } from "../lib/index.js";
+import { generateImageThroughPool, readImageBase64 } from "../lib/index.js";
 import { AccountPoolManager } from "../lib/pool.js";
 
 const settings = { read: async () => ({ catalogModels: [], enabledModelIds: [] }) };
@@ -174,4 +174,26 @@ test("a configured image-generation model is kept as-is", async (t) => {
     },
   );
   assert.deepEqual(wireModels, ["gemini-3.1-flash-image"]);
+});
+
+test("retained images are encoded once and reused until the file changes", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "image-cache-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, "shot.png");
+
+  // A content-addressed attachment can never change, so its bytes survive both
+  // a rewrite and a new mtime: that is the LRU store's whole point.
+  await writeFile(path, "A");
+  assert.equal(readImageBase64(path, { immutable: true }), Buffer.from("A").toString("base64"));
+  await writeFile(path, "B");
+  await utimes(path, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+  assert.equal(readImageBase64(path, { immutable: true }), Buffer.from("A").toString("base64"));
+
+  // A mutable path is validated against size+mtime, so a changed file re-reads.
+  await writeFile(path, "C");
+  await utimes(path, new Date(Date.now() + 10000), new Date(Date.now() + 10000));
+  assert.equal(readImageBase64(path), Buffer.from("C").toString("base64"));
+
+  // A missing file has no payload at all (the caller falls back to text).
+  assert.equal(readImageBase64(join(dir, "gone.png")), undefined);
 });

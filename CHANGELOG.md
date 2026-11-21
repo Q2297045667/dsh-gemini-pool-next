@@ -2,6 +2,28 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.15.0 — 2026-11-21
+
+### Added
+- **Claude 5.5 改用后端通告的 1M 上下文 / 128000 输出**：目录解析现在同时采纳实体上的 `maxTokens`（输入窗口）与 `maxOutputTokens`（输出上限）——未知实体直接使用，已登记模型族取同族实体的最大值；`RUNTIME_MAX_OUTPUT_TOKENS` 把 Claude 5.5 的请求上限从 64000 提到 **128000**（实测后端接受该值并返回 200）。顺带修正生图实体：`gemini-3.1-flash-image` 的真实上下文是 **65536**，此前被当成 Gemini 文本的 1M
+- **GPT-OSS 120B 标注下架日期**：后端 `tagDescription` 写明 "GPT-OSS will be removed from Antigravity on November 30, 2026"，目录里标记 `deprecated` 并给出日期（设置页显示下架徽标，tooltip 带日期）；已下架的 Claude 4.6 说明同步改成「已下架」语气
+
+### Changed
+- **图片 base64 复用（性能）**：对话里保留的图片此前每轮都重新读盘并重新 base64——4MB 图片实测 **2.81 ms/张/轮**，按 5 张图算每轮约 14 ms（5 × 2.81 ms）纯 CPU + IO。新增有界 LRU（32 条 / 64MB）：内容寻址附件（sha256 对象库）按路径复用，普通路径按 size + mtime 校验失效；命中后 **0.025 ms/张**（约 113×）
+- **实体目录按账号缓存（性能 + 修泄漏）**：缓存键从 access token 改成 `(email, projectId)`。token 每小时轮换，旧实现每次轮换后的第一条请求都要先打 3 个目录端点（daily / production / sandbox，3 次独立 HTTPS 往返）才能出流；现在轮换后直接命中。同时给缓存加上 64 条上限并在写入时清理过期项 —— 旧实现每个轮换 token 都留下一个永不删除的 key
+- **额度刷新预热实体缓存**：`fetchQuotaForAccount` 本来就拉过一次目录，现在把同一份结果写进实体缓存，启动 / 刷新后的第一条请求不再重复打 3 个端点；显式刷新时先失效该账号旧缓存（套餐或模型集可能已变）
+
+### Fixed
+- **`entityCache` 无界增长**：map 只增不删（同上面第二、三条）
+- **token 轮换后的额外首请求延迟**：同上
+- 说明：`FileModelSettingsStore.read()` 实测 **0.091 ms/次**，未做缓存 —— 收益不足以抵消「复用同一个对象」带来的共享可变状态风险
+
+### 验证
+- `npm run check` 全量 **330/330**（v0.14.0 基线 325 + 5 条）：目录采纳后端上下文窗口（Claude 1M、生图 65K、无通告时保留静态值）、GPT-OSS / Claude 4.6 说明与 Claude 5.5 上限、实体缓存按账号命中（同账号换 token 仍只发现 3 次，换账号再发现 3 次）、图片缓存复用与 size+mtime 失效、缺失文件返回 undefined
+- **真机事实（2026-11-21，同一 Pro 账号）**：`claude-opus-5-5-high` 与 `claude-sonnet-5-5-low` 通告 `maxTokens` 1000000 / `maxOutputTokens` 128000；`gemini-3.1-flash-image` 通告 65536 / 65536；`gpt-oss-120b-medium` 的 `tagDescription` 为 "GPT-OSS will be removed from Antigravity on November 30, 2026."；探针把 `generationConfig.maxOutputTokens` 设成 128000 得到 200
+- **基准（本机，warm fs cache）**：4MB 图片 `readFileSync + base64` 2.81 ms/op → `readImageBase64` 命中 0.0248 ms/op；设置读取 0.091 ms/op（未改）
+- 说明：未做完整 GUI 端到端；本版本需重新安装 profile 并重启 `dsh web` 才生效
+
 ## v0.14.0 — 2026-11-21
 
 ### Added
