@@ -34,7 +34,7 @@ async function setup(t) {
   return { pool, settings, settingsFile, addAccount };
 }
 
-function stubCatalogFetch(t, catalogs) {
+function stubCatalogFetch(t, catalogs, extra = {}) {
   t.mock.method(globalThis, "fetch", async (url, init) => {
     const token = new Headers(init?.headers).get("authorization");
     const account = token?.replace("Bearer access_", "");
@@ -43,7 +43,7 @@ function stubCatalogFetch(t, catalogs) {
     let payload;
     if (path.endsWith(":loadCodeAssist")) payload = { cloudaicompanionProject: `project-${account}` };
     else if (path.endsWith(":retrieveUserQuotaSummary")) payload = { groups: [] };
-    else if (path.endsWith(":fetchAvailableModels")) payload = { models: catalogs[account] };
+    else if (path.endsWith(":fetchAvailableModels")) payload = { models: catalogs[account], ...extra };
     else throw new Error(`unexpected request ${path}`);
     return new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } });
   });
@@ -322,4 +322,24 @@ test("an Ultra account that serves carbon entities gets Carbon enabled and routa
   assert.ok(stored.enabledModelIds.includes("gemini-4-carbon"));
   // Per-level entities are folded into the base model, never raw rows.
   assert.equal(stored.catalogModels.some((model) => model.id.startsWith("gemini-4-carbon-")), false);
+});
+
+test("a refresh reconciles a stale defaultImageModel with the backend's image list", async (t) => {
+  const { pool, settings, addAccount } = await setup(t);
+  const account = await addAccount("free");
+  // What an older build stored: a text model in the image slot.
+  await pool.updateConfig({ defaultImageModel: "gemini-3.8-flash" });
+  stubCatalogFetch(
+    t,
+    {
+      free: {
+        "gemini-3.1-flash-image": { displayName: "Gemini 3.1 Flash Image", maxTokens: 65536, maxOutputTokens: 65536 },
+        "gemini-3.8-flash-low": { displayName: "Gemini 3.8 Flash (Low)" },
+      },
+    },
+    { imageGenerationModelIds: ["gemini-3.1-flash-image"] },
+  );
+  await fetchQuotaForAccount(account, pool, settings);
+  assert.equal(pool.defaultImageModel, "gemini-3.1-flash-image");
+  assert.deepEqual((await settings.read()).imageGenerationModelIds, ["gemini-3.1-flash-image"]);
 });

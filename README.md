@@ -258,6 +258,8 @@ HTTPS_PROXY=http://127.0.0.1:7897
 
 **后端通告的是「主模型 + 每档一个实体」。** `fetchAvailableModels` 用 `gemini-4-neon-low/medium/high/xhigh` 这种实体表达一个模型，同时用 `groupedModels` 给出「基础 id → 支持的思考档位」、`agentModelSorts` 给出 Recommended 顺序（Neon 第一）、`defaultAgentModelId` 给出默认模型（`gemini-4-neon-high`）。插件把同一 base 的分级实体折叠成一条可选模型：已登记模型族（Neon / Argon / Hydrogen / Carbon / 3.8 Flash / Claude 5.5）由静态表提供名称、输出上限与默认档，**未登记的模型族也会按 base 自动折叠**（思考档位取实际通告到的实体），所以后端下次新增模型不会在设置页里散成四条。`…-tiered-high` 这类「tiered 别名 + 档位」的实体归属于基础模型，不会变成一条名为「… Tiered」的模型。
 
+**生图模型同样以后端为准。** `fetchAvailableModels` 的 `imageGenerationModelIds` 决定设置页「默认生图模型」下拉里能选什么，也决定生图请求实际用哪个实体；不再靠「id 里带 `-image`」猜。额度刷新时若旧配置不在这个列表里（例如早期版本存下的文本模型），会自动切换到列表里可用的生图模型并持久化，所以配置不会一直停在错误的值上。
+
 **后端把「本套餐不可用」的模型也放在目录里。** Gemini 4 Carbon 当前是 Ultra 专属：Pro 账号的 `fetchAvailableModels` 只会通告一个 `gemini-4-carbon-disabled` 占位实体（`disabled: true`、`tagTitle: "Unavailable"`、`tagDescription` 写明仅 Ultra 可用）。插件把这类禁用实体当作「非可用证据」：它不会变成可选模型、不会自动勾选、也不会被当作运行时实体发请求；设置页里该模型显示为「账号不可用」，徽标 tooltip 直接给出后端的原因。等到账号真的通告 `gemini-4-carbon-low/medium/high` 这些可用实体时，模型会自动变为可用并按等级路由（输出上限 262144）。
 
 **可用的模型与思考等级都以账号实际通告的实体为准。** 插件登录后拉取该账号的 `fetchAvailableModels`，只启用后端真正通告的实体：账号没有的模型在设置页显示「账号不可用」且不会被勾选。若已保存的会话仍指向这类模型，请求会自动降级到池内最合适的可用模型，而不是把请求发到一个后端从未通告的实体上——后者正是 `Requested entity was not found`（404）的来源。

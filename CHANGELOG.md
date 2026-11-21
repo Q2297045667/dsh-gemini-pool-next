@@ -2,6 +2,23 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.16.0 — 2026-11-21
+
+### Added
+- **生图模型改由后端 `imageGenerationModelIds` 驱动**：合并三个端点目录时收集该字段（去重、保序），随目录持久化进设置（上限 16 条），设置页下拉由 `status.models.imageModels` 生成，`resolveImageGenerationModelId()` 也以它为准 —— 不再用「id 里带 `-image`」的启发式。尚未发现过目录的旧安装、以及端点不返回该字段时，才回退到后缀启发式
+- **配置自愈**：额度刷新时若 `defaultImageModel` 不在后端列表里（旧版本存下的文本模型），自动切到列表里可用的生图模型并写回账号池；同一配置只提示一次，不会每次请求刷屏
+- **`requestImages`（宿主附件服务）复用 base64**：`prepareRequestImages` 把「附件 id + 预览尺寸」作为键缓存编码结果，与磁盘图片共用一个 32 条 / 64MB 的 LRU；同一张图在同一会话的后续请求不再调用附件服务、也不再重新编码，`imageBlockToPart` 直接取缓存里的 base64
+
+### Fixed
+- **设置页生图下拉的显示值与实际使用值不一致**：存的 `defaultImageModel` 不在选项里时（例如 `gemini-3.8-flash`），下拉显示第一项而 host 用的是另一个；现在 select 的 value 明确回落到「host 实际会用的那一项」
+- **旧安装的 `catalogClient` 修订号升级**：追加 `.image-models`，使 0.15.0 及更早的安装重新发现一次目录、拿到 `imageGenerationModelIds`
+
+### 验证
+- `npm run check` 全量 **336/336**（v0.15.0 基线 330 + 6 条）：合并/持久化后端生图列表、status 载荷 `imageModels`、后端列表驱动下拉（含 `-image` 假阳性不入选）、`defaultImageModel` 与列表不一致时自愈、resolver 的后端优先/回退启发式、同一附件第二次请求不再调用附件服务
+- **真机（同一 Pro 账号）**：目录返回 `imageGenerationModelIds: ["gemini-3.1-flash-image"]`；把 `defaultImageModel` 预置成 `gemini-3.8-flash` 跑一次额度刷新 → 自动切到 `gemini-3.1-flash-image` 并持久化，随后 `generateImageThroughPool` 实测 **11942 ms 返回 `image/jpeg`**（base64 长度 661740），证明请求确实打在列表里的生图模型上
+- **基准**：1MB 预览图的 base64 编码 **0.607 ms/次**（复用后每轮省下这次编码，外加一次附件服务调用）
+- 说明：`requestImages` 复用只有单测覆盖（需要宿主附件服务，未做在线复现）；本版本需重新安装 profile 并重启 `dsh web` 生效
+
 ## v0.15.0 — 2026-11-21
 
 ### Added

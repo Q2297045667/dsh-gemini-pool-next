@@ -315,3 +315,30 @@ test("unexpected storage failures return a redacted 500 response", async (t) => 
   assert.equal(response.body.ok, false);
   assertNoTokens(response);
 });
+
+test("the status payload offers exactly the backend's image-generation models", async (t) => {
+  const api = await createApi(t);
+  const catalogModels = parseCatalogModels({
+    models: {
+      "gemini-3.1-flash-image": { displayName: "Gemini 3.1 Flash Image", maxTokens: 65536, maxOutputTokens: 65536 },
+      // An id that merely looks like an image model must not enter the list.
+      "gemini-3.8-flash": { displayName: "Gemini 3.8 Flash", maxTokens: 1048576 },
+    },
+  });
+  await api.settings.write({
+    catalogModels,
+    enabledModelIds: ["gemini-3.1-flash-image", "gemini-3.8-flash"],
+    imageGenerationModelIds: ["gemini-3.1-flash-image"],
+  });
+  const status = await api.request();
+  const imageModels = status.body.value.models.imageModels;
+  assert.deepEqual(imageModels.map((model) => model.id), ["gemini-3.1-flash-image"]);
+  assert.equal(imageModels[0].available, true);
+  assert.equal(imageModels[0].name, "Gemini 3.1 Flash Image");
+
+  // Before the first discovery the payload still offers a usable entry, derived
+  // from the catalog's `-image` rows.
+  await api.settings.write({ catalogModels, enabledModelIds: [], imageGenerationModelIds: [] });
+  const fallback = await api.request();
+  assert.deepEqual(fallback.body.value.models.imageModels.map((model) => model.id), ["gemini-3.1-flash-image"]);
+});

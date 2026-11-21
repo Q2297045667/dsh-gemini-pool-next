@@ -441,3 +441,32 @@ test("entity discovery is cached per account, so a token refresh does not re-dis
   await run({ projectId: "entity-cache-project", email: "other@example.com", token: "token-b" });
   assert.equal(catalogCalls, 6);
 });
+
+test("a prepared request image is encoded once and reused by the next request", async (t) => {
+  let readCalls = 0;
+  const attachment = {
+    attachmentId: `sha256:${"a".repeat(64)}`,
+    bytes: 4096,
+    mediaType: "image/png",
+    width: 800,
+    height: 600,
+  };
+  const messages = [{ role: "user", content: [{ type: "image", attachment }] }];
+  const attachments = {
+    async readImageRequest() {
+      readCalls += 1;
+      return { data: Buffer.from("PNGDATA"), mediaType: "image/png", width: 800, height: 600 };
+    },
+  };
+  const inlineOf = (requests) =>
+    requests[0].request.contents.flatMap((content) => content.parts).find((part) => part.inlineData);
+
+  const first = await runRequest(t, { messages, attachments });
+  const second = await runRequest(t, { messages, attachments });
+
+  assert.equal(readCalls, 1, "the host attachment service is asked once for the same image");
+  const expected = Buffer.from("PNGDATA").toString("base64");
+  assert.equal(inlineOf(first.requests).inlineData.data, expected);
+  // The second request resends the same bytes without a second prepare/encode.
+  assert.deepEqual(inlineOf(second.requests).inlineData, inlineOf(first.requests).inlineData);
+});

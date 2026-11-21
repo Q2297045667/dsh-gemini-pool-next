@@ -4,7 +4,7 @@ import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { generateImageThroughPool, readImageBase64 } from "../lib/index.js";
+import { generateImageThroughPool, readImageBase64, resolveImageGenerationModelId } from "../lib/index.js";
 import { AccountPoolManager } from "../lib/pool.js";
 
 const settings = { read: async () => ({ catalogModels: [], enabledModelIds: [] }) };
@@ -196,4 +196,53 @@ test("retained images are encoded once and reused until the file changes", async
 
   // A missing file has no payload at all (the caller falls back to text).
   assert.equal(readImageBase64(join(dir, "gone.png")), undefined);
+});
+
+test("the image model follows the backend's imageGenerationModelIds list", () => {
+  const catalog = [
+    { id: "gemini-3.1-flash-image", name: "Flash Image", available: true },
+    { id: "gemini-3.8-flash", name: "Flash", available: true },
+    { id: "imagen-4-fast", name: "Imagen", available: true },
+  ];
+  const list = ["imagen-4-fast", "gemini-3.1-flash-image"];
+  // A backend-listed id is kept even though its name does not end in "-image".
+  assert.equal(resolveImageGenerationModelId("imagen-4-fast", catalog, list), "imagen-4-fast");
+  // A suffix match the backend does not list is replaced by the listed model.
+  assert.equal(resolveImageGenerationModelId("gemini-3.8-flash", catalog, ["gemini-3.1-flash-image"]), "gemini-3.1-flash-image");
+  // Nothing configured: the first listed model the catalog still serves wins.
+  assert.equal(resolveImageGenerationModelId("", catalog, list), "imagen-4-fast");
+  assert.equal(
+    resolveImageGenerationModelId("", [{ ...catalog[2], available: false }, catalog[0]], list),
+    "gemini-3.1-flash-image",
+    "an unavailable first entry steps aside",
+  );
+  // Without a discovered list the historical heuristic still applies.
+  assert.equal(resolveImageGenerationModelId("gemini-3.8-flash", catalog, []), "gemini-3.1-flash-image");
+  assert.equal(resolveImageGenerationModelId("gemini-3.1-flash-image", catalog, []), "gemini-3.1-flash-image");
+});
+
+test("the settings' image list decides the model a request actually uses", async (t) => {
+  const pool = await setup(t);
+  // A configured id the backend does not list (no "-image" suffix either).
+  await pool.updateConfig({ defaultImageModel: "imagen-4-fast" });
+  const settingsWithList = {
+    read: async () => ({
+      catalogModels: [],
+      enabledModelIds: [],
+      imageGenerationModelIds: ["gemini-3.1-flash-image"],
+    }),
+  };
+  const wireModels = [];
+  await withStreamFetch(
+    (url, init) => {
+      wireModels.push(JSON.parse(init.body).model);
+      return new Response(`data:${JSON.stringify(imageFrame())}`, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+    async () => {
+      await generateImageThroughPool("x", pool, settingsWithList);
+    },
+  );
+  assert.deepEqual(wireModels, ["gemini-3.1-flash-image"]);
 });

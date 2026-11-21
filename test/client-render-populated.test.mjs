@@ -604,3 +604,23 @@ test("no real email leaks from the committed fixture", () => {
   const leaked = raw.match(/[\w.+-]+@(?!example\.com)[\w-]+\.[\w.]+/g);
   assert.equal(leaked, null, `fixture contains a non-example email: ${leaked && leaked.join(", ")}`);
 });
+
+test("the image dropdown follows the models the backend advertises", async () => {
+  const fixture = structuredClone(STATUS_FIXTURE);
+  fixture.models.imageModels = [
+    { id: "gemini-3.1-flash-image", name: "Flash Image", available: true },
+    { id: "imagen-4-fast", name: "Imagen 4 Fast", available: true },
+  ];
+  fixture.models.options = [
+    { id: "gemini-3.8-flash", name: "Gemini Flash", inputModalities: ["text", "image"] },
+    // Takes the `-image` heuristic bait but is not in the backend's list.
+    { id: "gemini-2.5-flash-image-legacy", name: "Legacy Image", inputModalities: ["text", "image"] },
+  ];
+  const { mount, rt } = loadClient({ statusPayload: fixture, quotaPayload: fixture, requests: [] });
+  await mount();
+  const select = rt.nodes.find((node) => node.props.id === "dsha-cfg-image-model");
+  assert.deepEqual(select.children.map((node) => node.props.value), ["gemini-3.1-flash-image", "imagen-4-fast"]);
+  // The stored value is a text model that is not offered any more: the select
+  // must show the entry the host will actually use, not the stale one.
+  assert.equal(select.props.value, "gemini-3.1-flash-image");
+});
