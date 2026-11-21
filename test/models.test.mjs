@@ -6,6 +6,7 @@ import {
   baseModelMatcher,
   canonicalModelId,
   compareAntigravityModels,
+  consolidateUngroupedCatalogModels,
   familyFallbackBases,
   getMaxOutputTokens,
   inferModelShape,
@@ -180,7 +181,12 @@ test("inferred shapes strip the level suffix of revamped entities", () => {
 
 test("catalog ordering puts the new flagship first and Claude 5.5 above 4.6", () => {
   const gemini = MODELS.filter((m) => m.id.startsWith("gemini")).sort(compareAntigravityModels);
-  assert.equal(gemini[0].id, "gemini-4-argon");
+  // Gemini 4 Neon is the backend's current default agent model, so it leads the
+  // Gemini 4 line; the server's Recommended order is Neon, Argon, Hydrogen.
+  assert.equal(gemini[0].id, "gemini-4-neon");
+  const rank = (id) => gemini.findIndex((m) => m.id === id);
+  assert.ok(rank("gemini-4-neon") < rank("gemini-4-argon"), "Neon must sort before Argon");
+  assert.ok(rank("gemini-4-argon") < rank("gemini-4-hydrogen"), "Argon must sort before Hydrogen");
   const claude = MODELS.filter((m) => m.id.startsWith("claude")).sort(compareAntigravityModels);
   assert.ok(claude[0].id.endsWith("5.5"), "expected a 5.5 model first, got " + claude[0].id);
   const opusIdx = claude.findIndex((m) => m.id === "claude-opus-5.5");
@@ -593,3 +599,149 @@ test("Gemini 4 Hydrogen joins the Gemini text family without crossing the image 
   assert.deepEqual(familyFallbackBases("gemini-3.1-flash-image"), []);
 });
 
+
+/** The entities the backend advertises for Gemini 4 Neon (daily endpoint). */
+const NEON_ENTITIES = new Set([
+  "gemini-4-neon-low",
+  "gemini-4-neon-medium",
+  "gemini-4-neon-high",
+  "gemini-4-neon-xhigh",
+]);
+
+test("Gemini 4 Neon is a first-class catalog model with a real xhigh level", () => {
+  const neon = modelById("gemini-4-neon");
+  assert.ok(neon, "gemini-4-neon must be catalogued");
+  assert.equal(neon.name, "Gemini 4 Neon");
+  assert.deepEqual(neon.inputModalities, ["text", "image"]);
+  assert.equal(neon.contextWindow, 1048576);
+  // Every advertised per-level entity reports maxOutputTokens 262144.
+  assert.equal(neon.maxTokens, 262144);
+  assert.equal(getMaxOutputTokens("gemini-4-neon", "gemini-4-neon-xhigh"), 262144);
+  assert.deepEqual(neon.reasoningEfforts, ["low", "medium", "high", "xhigh"]);
+  assert.equal(neon.available, undefined);
+  // Only the base is a public model; level siblings are entities, not models.
+  for (const id of ["gemini-4-neon-low", "gemini-4-neon-medium", "gemini-4-neon-high", "gemini-4-neon-xhigh"]) {
+    assert.equal(modelById(id), undefined, id + " must not be a public model");
+  }
+  assert.deepEqual(reasoningLevelsForModel("gemini-4-neon", [...NEON_ENTITIES]), [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ]);
+});
+
+test("Gemini 4 Neon routes every effort onto an entity, never the bare id", () => {
+  const neon = ROUTING["gemini-4-neon"];
+  assert.ok(neon, "gemini-4-neon must have a routing entry");
+  assert.equal(neon.off, "gemini-4-neon-high");
+  assert.deepEqual(neon.routing, {
+    minimal: "gemini-4-neon-low",
+    low: "gemini-4-neon-low",
+    medium: "gemini-4-neon-medium",
+    high: "gemini-4-neon-high",
+    xhigh: "gemini-4-neon-xhigh",
+  });
+  // A bare `gemini-4-neon` request answers 404 on the live backend, so the
+  // static fallback must never name it.
+  assert.equal(staticRequestModelId("gemini-4-neon", "off"), "gemini-4-neon-high");
+  for (const effort of ["minimal", "low", "medium", "high", "xhigh"]) {
+    assert.notEqual(staticRequestModelId("gemini-4-neon", effort), "gemini-4-neon", effort);
+  }
+  assert.equal(runtimeEntityCandidates("gemini-4-neon", "xhigh", NEON_ENTITIES)[0], "gemini-4-neon-xhigh");
+  assert.equal(runtimeEntityCandidates("gemini-4-neon", "low", NEON_ENTITIES)[0], "gemini-4-neon-low");
+  const all = runtimeEntityCandidates("gemini-4-neon", "high", NEON_ENTITIES);
+  assert.equal(all.includes("gemini-4-neon"), false, "the bare id is not a real entity");
+  assert.deepEqual(inferModelShape("gemini-4-neon-xhigh").reasoningEfforts, ["low", "medium", "high", "xhigh"]);
+  assert.equal(inferModelShape("gemini-4-neon-xhigh").name, "Gemini 4 Neon");
+});
+
+test("a tiered alias pinned to a level belongs to its base model", () => {
+  // The backend names gemini-4-hydrogen-tiered-high "Gemini 4 Hydrogen (High)"
+  // and leaves it out of groupedModels: it is a level sibling of the base, not
+  // a model called "Gemini 4 Hydrogen Tiered".
+  assert.deepEqual(splitEntityId("gemini-4-hydrogen-tiered-high"), {
+    base: "gemini-4-hydrogen",
+    kind: "level",
+    level: "high",
+  });
+  assert.deepEqual(splitEntityId("gemini-4-hydrogen-tiered-xhigh"), {
+    base: "gemini-4-hydrogen",
+    kind: "level",
+    level: "xhigh",
+  });
+  // The plain tiered entity keeps its own kind.
+  assert.deepEqual(splitEntityId("gemini-4-hydrogen-tiered"), {
+    base: "gemini-4-hydrogen",
+    kind: "tiered",
+    level: undefined,
+  });
+  assert.equal(baseModelMatcher("gemini-4-hydrogen")("gemini-4-hydrogen-tiered-high"), true);
+  assert.equal(inferModelShape("gemini-4-hydrogen-tiered-high").name, "Gemini 4 Hydrogen");
+  assert.deepEqual(
+    reasoningLevelsForModel("gemini-4-hydrogen", [
+      "gemini-4-hydrogen-tiered-high",
+      "gemini-4-hydrogen-tiered-xhigh",
+    ]),
+    ["high", "xhigh"],
+  );
+});
+
+test("unclaimed level siblings become one model instead of one model per level", () => {
+  // A family this build does not list statically (the shape Gemini 4 Neon had
+  // before it was catalogued) still resolves to a single selectable model.
+  const raw = [
+    {
+      id: "gemini-5-quartz-low",
+      name: "Gemini 5 Quartz",
+      inputModalities: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 100000,
+      reasoningEfforts: ["low", "medium", "high"],
+      available: true,
+      remainingFraction: 0.5,
+    },
+    {
+      id: "gemini-5-quartz-high",
+      name: "Gemini 5 Quartz",
+      inputModalities: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 200000,
+      reasoningEfforts: ["low", "medium", "high"],
+      available: true,
+    },
+    // No level suffix and no sibling: nothing proves it is a variant.
+    {
+      id: "gemini-5-quartz-sonar",
+      name: "Gemini 5 Quartz Sonar",
+      inputModalities: ["text"],
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      reasoningEfforts: [],
+      available: true,
+    },
+  ];
+  const grouped = consolidateUngroupedCatalogModels(raw, new Set());
+  const base = grouped.find((model) => model.id === "gemini-5-quartz");
+  assert.ok(base, "the level siblings must consolidate into one model");
+  assert.equal(base.name, "Gemini 5 Quartz");
+  assert.deepEqual(base.reasoningEfforts, ["low", "high"]);
+  assert.equal(base.maxTokens, 200000, "the group keeps the largest advertised ceiling");
+  assert.equal(base.available, true);
+  assert.equal(grouped.some((model) => model.id === "gemini-5-quartz-low"), false);
+  assert.equal(grouped.some((model) => model.id === "gemini-5-quartz-high"), false);
+  assert.ok(grouped.some((model) => model.id === "gemini-5-quartz-sonar"), "unrelated entities stay separate");
+
+  // Entities a static entry already claimed are left to the caller.
+  const claimed = consolidateUngroupedCatalogModels(raw, new Set(["gemini-5-quartz-low", "gemini-5-quartz-high"]));
+  assert.equal(claimed.some((model) => model.id === "gemini-5-quartz"), false);
+});
+
+test("an unknown entity keeps the output ceiling the backend advertises", () => {
+  assert.equal(inferModelShape("gemini-9-test", { maxOutputTokens: 123456 }).maxTokens, 123456);
+  assert.equal(inferModelShape("gemini-9-test", { maxOutputTokens: "123456" }).maxTokens, 123456);
+  // A missing or useless value falls back to the family ceiling.
+  assert.equal(inferModelShape("gemini-9-test", {}).maxTokens, 65536);
+  assert.equal(inferModelShape("gemini-9-test", { maxOutputTokens: 0 }).maxTokens, 65536);
+  assert.equal(inferModelShape("gemini-9-test", { maxOutputTokens: -5 }).maxTokens, 65536);
+});

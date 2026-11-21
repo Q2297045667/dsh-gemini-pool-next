@@ -2,6 +2,29 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.14.0 — 2026-11-21
+
+### Added
+- **接入 Gemini 4 Neon**：后端现在的默认 agent 模型是 `gemini-4-neon-high`（`defaultAgentModelId`），目录用 `gemini-4-neon-low/medium/high/xhigh` 四个实体表达（1M 上下文、**262144** 输出上限、`thinkingLevel` 1/2/3/**100**），并在 `groupedModels` 里声明它支持四档。静态目录新增 `gemini-4-neon`（Low/Medium/High/**XHigh**），`ROUTING` 每档映射到真实实体、`off` 落到 `-high`。后端**没有**裸 `gemini-4-neon` 实体（实测 404 `Requested entity was not found`），因此任何路径都不会请求它；`RUNTIME_MAX_OUTPUT_TOKENS` 同步补上 Neon 族，否则 `getMaxOutputTokens()` 会回退 65536，把每次请求的 `generationConfig.maxOutputTokens` 砍到真实上限的四分之一
+- **未登记模型族自动折叠**（`consolidateUngroupedCatalogModels()`）：没有任何静态条目认领的「同 base 分级实体」会折叠成一条模型 —— 思考档位取实际通告的实体、输出上限取族内最大、额度取可用成员。Gemini 4 Neon 这类「后端先上新模型、插件后适配」的窗口期以后不会再在设置页里散成四条；`-sonar` 这类没有档位后缀的实体保持独立
+- **未登记实体的输出上限以后端通告为准**：`inferModelShape()` 读取实体自身的 `maxOutputTokens`（后端同一对象里的 `maxTokens` 是输入上下文），所以未被静态表登记的实体、以及未登记族折叠出来的模型都用真实上限而不是族内回退值；已登记模型族仍用静态表里的值，与 `RUNTIME_MAX_OUTPUT_TOKENS` 给出的请求上限保持一致
+- **目录修订号触发重新发现**：`catalogClient` 指纹末尾追加静态目录修订号（`2026-11-21.neon`）。已保存的目录存的是折叠后的公共模型而不是原始实体表，折叠规则一变就必须重新发现，否则旧条目会一直留在磁盘上
+
+### Changed
+- **`…-tiered-high` 归入基础模型**：`splitEntityId()` 优先识别「tiered 别名 + 档位」，`gemini-4-hydrogen-tiered-high/xhigh` 归到 `gemini-4-hydrogen`（后端自己的 displayName 就是 `Gemini 4 Hydrogen (High/XHigh)`，且它们不在 `groupedModels` / `agentModelSorts` 里）；`inferModelShape()` 的等级后缀命名同步去掉 `-tiered`
+- **模型排序对齐后端 Recommended 顺序**：`compareAntigravityModels()` 新增 `sortRank`（Neon 0 / Argon 1 / Hydrogen 2），模型选择器与族内降级链都以 Neon 优先
+
+### Fixed
+- **`…-tiered-high` 不再泄漏成独立模型**：此前 `gemini-4-hydrogen-tiered-high/xhigh` 会变成两条名为「Gemini 4 Hydrogen Tiered」的可选模型（旧目录里确实被勾选过）
+- **`defaultImageModel` 指向文本模型时自动改走生图模型**：旧版本写下的 `gemini-3.8-flash` 这类值不在设置页下拉里（下拉只列 `-image` 实体），却会被直接用于生图请求，白跑一次再报 `No image data returned`。`resolveImageGenerationModelId()` 只在配置值本身是 `-image` 实体时保留它，否则改用目录里第一个可用生图模型并打一行警告
+
+### 验证
+- `npm run check` 全量 **325/325**（v0.13.1 基线 317 + Neon 目录/路由 5 条 + tiered 折叠 1 条 + 未登记族折叠 1 条 + 后端输出上限 1 条 + 生图模型解析 2 条）：Neon 折叠/四档路由/裸 id 不出现、每档实体不带 `thinkingConfig` 且 `maxOutputTokens=262144`、tiered 别名归并、未登记族按 base 折叠且无档位实体保持独立、`maxOutputTokens` 覆盖与非法值回退、生图模型解析；原有目录排序断言按后端顺序更新为 Neon → Argon → Hydrogen，`catalogClient` 形状断言更新为「版本/变更号/修订号」
+- **真机探针（同一 Pro 账号，2026-11-21）**：指纹 `hub/2.24.0` 下 daily / sandbox 各 **36** 个实体（含 `gemini-4-neon-*`、`gemini-4-hydrogen-sonar`、`gemini-4-hydrogen-tiered-high/xhigh`），production **26** 个；把客户端版本抬到 2.25.0 / 2.26.0 / 2.30.0 目录完全一致，因此本次不升级指纹。裸 `streamGenerateContent` 实测：`gemini-4-neon-low/medium/high/xhigh` 全部 200 且 `-xhigh` 正常出文；`gemini-4-neon` 返回 404 `Requested entity was not found`
+- **对真实目录跑 `parseCatalogModels`**：输出为单条 `gemini-4-neon`（efforts low/medium/high/xhigh、maxTokens 262144、available），`gemini-4-hydrogen` 单条（四档），不再出现任何 `-tiered` 条目；把当前 profile 里已勾选的 raw id（`gemini-4-neon-*`、`gemini-4-hydrogen-tiered-*`）按 `splitEntityId` 迁移后全部落到 `gemini-4-neon` / `gemini-4-hydrogen`
+- 说明：未做完整 DSH GUI 端到端（改动需重新安装 profile 并重启 `dsh web` 才生效）；`gemini-4-hydrogen-sonar` 仍是独立模型 —— 它在目录里没有 `displayName`、也不在 `groupedModels` / `agentModelSorts`，但没有档位后缀可归并，保持原样而不是隐藏
+- 附带发现（未改）：Claude 5.5 静态输出上限是 64000，后端 `maxOutputTokens` 通告 128000；探针把 `generationConfig.maxOutputTokens` 设成 128000 得到 200，说明后端接受该值，但未做「真的产出 >64000 tokens」的长输出实测，所以本次保留保守值，只记录差异
+
 ## v0.13.1 — 2026-11-16
 
 ### Fixed

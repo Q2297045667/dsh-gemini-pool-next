@@ -165,7 +165,9 @@ test("a refresh stamps the catalog with the client fingerprint it was discovered
   await fetchQuotaForAccount(account, pool, settings);
   const stored = await settings.read();
   assert.equal(stored.catalogClient, catalogClientFingerprint());
-  assert.match(stored.catalogClient, /^\d+\.\d+\.\d+\/\d+$/);
+  // client version / changelist / static-catalog revision: the revision makes an
+  // upgrade that changes entity grouping re-discover the catalog.
+  assert.match(stored.catalogClient, /^\d+\.\d+\.\d+\/\d+\/.+$/);
 });
 
 test("a refresh prunes models no account in the pool serves", async (t) => {

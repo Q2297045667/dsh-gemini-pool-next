@@ -136,3 +136,42 @@ test("image HTTP 400 and 401 errors do not retry other endpoints", async (t) => 
     );
   }
 });
+
+test("a stale text model in defaultImageModel is routed to an image-generation model", async (t) => {
+  const pool = await setup(t);
+  // An older settings file can hold a text model here; the settings card only
+  // ever offered `-image` entries, so the value was never selectable.
+  await pool.updateConfig({ defaultImageModel: "gemini-3.8-flash" });
+  const wireModels = [];
+  await withStreamFetch(
+    (url, init) => {
+      wireModels.push(JSON.parse(init.body).model);
+      return new Response(`data:${JSON.stringify(imageFrame())}`, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+    async () => {
+      const result = await generateImageThroughPool("x", pool, settings);
+      assert.equal(result.base64, "QUJD");
+    },
+  );
+  assert.deepEqual(wireModels, ["gemini-3.1-flash-image"]);
+});
+
+test("a configured image-generation model is kept as-is", async (t) => {
+  const pool = await setup(t);
+  await pool.updateConfig({ defaultImageModel: "gemini-3.1-flash-image" });
+  const wireModels = [];
+  await withStreamFetch(
+    (url, init) => {
+      wireModels.push(JSON.parse(init.body).model);
+      return new Response(`data:${JSON.stringify(imageFrame())}`, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+    async () => {
+      await generateImageThroughPool("x", pool, settings);
+    },
+  );
+  assert.deepEqual(wireModels, ["gemini-3.1-flash-image"]);
+});

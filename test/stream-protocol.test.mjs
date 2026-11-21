@@ -379,3 +379,35 @@ test("an SSE error frame after a chunk quotes the captured traceId and classifie
     },
   );
 });
+
+test("Gemini 4 Neon dispatches every effort to a real entity with the full output ceiling", async (t) => {
+  const neonEntities = {
+    "gemini-4-neon-low": {},
+    "gemini-4-neon-medium": {},
+    "gemini-4-neon-high": {},
+    "gemini-4-neon-xhigh": {},
+    "gemini-4-argon-high": {},
+    "gemini-4-argon-low": {},
+    "gemini-4-argon-medium": {},
+  };
+  const expectations = [
+    ["low", "gemini-4-neon-low"],
+    ["medium", "gemini-4-neon-medium"],
+    ["high", "gemini-4-neon-high"],
+    ["xhigh", "gemini-4-neon-xhigh"],
+  ];
+  for (const [effort, expected] of expectations) {
+    const { requests } = await runRequest(t, {
+      modelId: "gemini-4-neon",
+      options: { reasoningEffort: effort },
+      entities: neonEntities,
+    });
+    assert.equal(requests.length, 1, `${effort}: exactly one request`);
+    // A bare `gemini-4-neon` request answers 404 on the live backend.
+    assert.equal(requests[0].model, expected, effort);
+    // The per-level entity pins the level, so no thinkingConfig is sent.
+    assert.equal(requests[0].request.generationConfig.thinkingConfig, undefined, effort);
+    // Every Neon entity advertises maxOutputTokens 262144.
+    assert.equal(requests[0].request.generationConfig.maxOutputTokens, 262144, effort);
+  }
+});
