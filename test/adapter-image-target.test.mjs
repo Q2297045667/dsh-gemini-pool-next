@@ -72,7 +72,7 @@ async function addAccount(manager, email) {
   return (await manager.getStatus()).accounts.find((a) => a.email === email).id;
 }
 
-test("readImageRequest receives target with valid positive width, height, and maxBytes", async () => {
+test("readImageRequest receives a target in the host's current ImageRequestTarget shape", async () => {
   const { manager, cleanup } = await createTempManager();
   try {
     await addAccount(manager, "imgtest@example.com");
@@ -125,9 +125,91 @@ test("readImageRequest receives target with valid positive width, height, and ma
     assert.ok(receivedTarget !== null, "readImageRequest should have been called");
     assert.ok(Number.isSafeInteger(receivedTarget.width) && receivedTarget.width > 0, "width must be positive int");
     assert.ok(Number.isSafeInteger(receivedTarget.height) && receivedTarget.height > 0, "height must be positive int");
-    assert.ok(Number.isSafeInteger(receivedTarget.maxBytes) && receivedTarget.maxBytes > 0, "maxBytes must be positive int");
+    // DSH 0.2.2-rc.5 replaced the single `maxBytes` soft target with a hard
+    // `maxImageBytes` limit plus a preferred `imageTargetBytes`; the attachment
+    // store rejects a target that omits either one (INVALID_ATTACHMENT_REF
+    // "Image request maxImageBytes must be a positive integer"), which made
+    // every image-bearing request fail.
+    assert.ok(
+      Number.isSafeInteger(receivedTarget.maxImageBytes) && receivedTarget.maxImageBytes > 0,
+      "maxImageBytes must be positive int",
+    );
+    assert.ok(
+      Number.isSafeInteger(receivedTarget.imageTargetBytes) && receivedTarget.imageTargetBytes > 0,
+      "imageTargetBytes must be positive int",
+    );
+    assert.ok(
+      receivedTarget.imageTargetBytes <= receivedTarget.maxImageBytes,
+      "imageTargetBytes must not exceed maxImageBytes",
+    );
+    assert.equal(receivedTarget.maxBytes, undefined, "the retired maxBytes field must not be sent");
     assert.equal(receivedTarget.width, 1920);
     assert.equal(receivedTarget.height, 1027);
+  } finally {
+    await cleanup();
+  }
+});
+
+/**
+ * The target above is only useful if the store accepts it, so this pins the
+ * exact admission rule the host's attachment store applies before it encodes
+ * anything (`validateTarget` in @deepseek-ai/dsh-attachment-local): both byte
+ * fields must be positive safe integers and the preferred target may not
+ * exceed the hard limit. Keeping the rule here means the shape regression is
+ * caught even when this plugin is tested without a live host tree.
+ */
+test("the built target satisfies the host's attachment-store admission rule", async () => {
+  const checkedInteger = (value) => Number.isSafeInteger(value) && value > 0;
+  const accepted = (target) =>
+    checkedInteger(target.width) &&
+    checkedInteger(target.height) &&
+    checkedInteger(target.maxImageBytes) &&
+    checkedInteger(target.imageTargetBytes) &&
+    target.imageTargetBytes <= target.maxImageBytes;
+
+  const { manager, cleanup } = await createTempManager();
+  try {
+    await addAccount(manager, "admission@example.com");
+    let receivedTarget = null;
+    const fakeAttachments = {
+      async readImageRequest(ref, target) {
+        receivedTarget = target;
+        return { mediaType: "image/png", data: Buffer.from("png"), width: target.width, height: target.height };
+      },
+    };
+    const adapter = new AntigravityPoolAdapter(manager, modelSettings(), () => fakeAttachments);
+    const messages = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            attachment: {
+              attachmentId: "sha256:admission",
+              mediaType: "image/png",
+              bytes: 4096,
+              width: 4000,
+              height: 3000,
+            },
+          },
+        ],
+      },
+    ];
+    await withStubbedFetch(
+      async () => sseResponse(SSE(textChunk("ok"))),
+      async () => {
+        for await (const _chunk of adapter.stream({ model: "gemini-2.5-flash", messages })) {
+          // drain
+        }
+      },
+    );
+    assert.ok(receivedTarget !== null);
+    assert.ok(
+      accepted(receivedTarget),
+      `the attachment store would refuse this target: ${JSON.stringify(receivedTarget)}`,
+    );
+    // Oversized sources are projected down, so the accepted target is bounded.
+    assert.ok(receivedTarget.width * receivedTarget.height <= 2048 * 2048);
   } finally {
     await cleanup();
   }

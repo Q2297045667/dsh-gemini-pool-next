@@ -88,7 +88,7 @@ The relay has one real advantage: **bans hit the operator's accounts, yours stay
 
 ## 🚀 Quick Start
 
-**Requirements**: DSH `>=0.2.2-rc.1 <0.3.0` (verified against 0.2.2-rc.1, matching the revamped Antigravity model catalog). Run `dsh --version` to check yours.
+**Requirements**: DSH `>=0.2.3-alpha.2 <0.3.0` (verified against 0.2.3-alpha.2, with chat, image generation, image input and catalog discovery exercised against the live backend). Run `dsh --version` to check yours.
 
 **1. Install the plugin**
 
@@ -195,7 +195,7 @@ When the main model cannot see images (e.g. a text-only model), a Gemini model f
 
 - **Data flow**: images are processed through Google accounts in the pool, sharing quota with chat and image generation.
 - **On by default**. To turn it off (any one of these): set the environment variable `ANTIGRAVITY_VISION_ENABLED=false`; or toggle it off in the Settings · Vision Bypass card; or set `visionEnabled: false` in accounts.json via `/antigravity-pool-next/api/config`. The switch governs both image admission and automatic description; with it off, pasting behaves exactly as the host does out of the box. `visionModel` picks the describing model — leave it empty for automatic selection, or pick one in the Settings card.
-- **Known dependency**: automatic description relies on the host's `agent/pre-step` event and image admission on `resolveModelInfo`. If pasting images misbehaves after a major host upgrade, revisit this section (verified against DSH 0.2.2-rc.1).
+- **Known dependency**: automatic description relies on the host's `agent/pre-step` event, image admission on `resolveModelInfo`, and request images on `ImageRequestTarget` (a `maxImageBytes` + `imageTargetBytes` pair since 0.2.2-rc.5). If pasting images misbehaves after a major host upgrade, revisit this section (verified against DSH 0.2.3-alpha.2).
 - **Troubleshooting**: if the model still receives a placeholder after pasting an image, run `/antigravity-doctor` and check the `visionBridge` / `visionShim` lines (`registered` + `installed` is the healthy state). Server log lines prefixed `[Antigravity Pool Vision]` record every bridge decision (request entry, model gate, rewrite result or passthrough reason); zero prefixed lines after a paste means the event never reached the bridge.
 
 ## 🤝 Coexisting with the upstream plugin

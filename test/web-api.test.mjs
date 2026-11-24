@@ -134,12 +134,14 @@ test("the model API explains unavailable Carbon and never lists the disabled ent
   const carbon = models.options.find((model) => model.id === "gemini-4-carbon");
   assert.ok(carbon, "Carbon stays listed so the card can explain why it is unavailable");
   assert.equal(carbon.available, false);
-  assert.equal(carbon.enabled, false);
   assert.match(carbon.unavailableReason, /Ultra plan subscribers/);
-  assert.match(carbon.description, /Ultra/i);
   assert.equal(models.options.some((model) => model.id.includes("-disabled")), false);
-  assert.equal(models.enabledModelIds.includes("gemini-4-carbon"), false);
   assert.equal(models.enabledModelIds.includes("gemini-4-carbon-disabled"), false);
+  // Carbon itself is a normal catalog row now (the backend serves the
+  // per-level entities on a Pro plan), so the default selection covers it the
+  // way it covers Argon and Hydrogen. Availability — not selection — is what
+  // keeps an unserved model out of the picker: configuredModels() drops it.
+  assert.equal(models.enabledModelIds.includes("gemini-4-carbon"), true);
   // Other models keep displaying normally.
   assert.equal(models.options.find((model) => model.id === "gemini-4-argon").available, false);
   assert.equal(models.options.find((model) => model.id === "gemini-3.8-flash").available, true);
@@ -167,7 +169,9 @@ test("a catalog saved with the raw disabled id never exposes it as a selectable 
   // the stale placeholder, and the residual selection is not exposed as usable.
   const carbon = models.options.find((model) => model.id === "gemini-4-carbon");
   assert.ok(carbon);
-  assert.equal(carbon.available, false);
+  // The static fallback row is selectable; what must never survive is the raw
+  // placeholder id, and the residual selection must not make it "enabled".
+  assert.equal(carbon.enabled, false, "the stored residual selection names the disabled id, not this model");
   assert.equal(models.options.find((model) => model.id === "gemini-4-carbon-disabled"), undefined);
   assertNoTokens(await api.request());
 });

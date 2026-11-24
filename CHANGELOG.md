@@ -2,6 +2,29 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.17.0 — 2026-11-25
+
+本次是「适配宿主 0.2.3-alpha.2 + 真机复核模型目录」的版本，并修掉了两个线上会直接打断请求的缺陷。
+
+### Fixed
+- **贴图请求 100% 失败（严重）**：`prepareRequestImages` 构造的 `ImageRequestTarget` 还是旧形状 `{ width, height, maxBytes }`，而宿主从 **0.2.2-rc.5** 起改成 `{ width, height, maxImageBytes, imageTargetBytes }`。宿主的附件存储会在编码任何字节之前先做准入校验（`validateTarget`），只认这两个新字段，于是每一张带图请求都在进入网络之前抛 `AttachmentError [INVALID_ATTACHMENT_REF] "Image request maxImageBytes must be a positive integer"`。现在同时下发 `maxImageBytes`（硬上限）与 `imageTargetBytes`（首选目标，等于硬上限），旧字段不再发送
+- **`EXHAUSTED` 不再依赖被收窄的构造签名**：DSH 0.2.2-alpha.2 把 `new LlmError(message, code)` 的 `code` 收窄成宿主自己的 `BuiltinLlmFailureCode` 联合类型，`EXHAUSTED` 不在其中。运行时从未拒绝，但这是一次类型契约变更；三条「池里没有可用账号」的分支改走宿主文档指定的 `LlmError.fromFailure({ message, code })`，任何未来版本开始校验都不会把「无可用账号」变成崩溃
+
+### Changed
+- **宿主依赖对齐 0.2.3-alpha.2**：`devDependencies` 的 `@deepseek-ai/dsh-{llm,home-paths,timeout,credentials,host-webserver}` 从 `0.2.2-rc.1` 提到 `0.2.3-alpha.2`，`@deepseek-ai/cordis` 提到 `4.2.0-alpha.1`、`@deepseek-ai/schemastery` 提到 `3.20.0-alpha.1`（旧的 `cordis@~4.1.0` 与新版 dsh-credentials 的 peer 冲突），`engines.dsh` 改为 `>=0.2.3-alpha.2 <0.3.0`。逐字段比对过两版 `dsh-llm` 的类型与运行时导出：本插件用到的 11 个符号全部存在且签名一致
+- **Gemini 4 Carbon 转为可用**：Pro 账号现在真实通告 `gemini-4-carbon-low/medium/high`（探针实测三档全部 200、`maxOutputTokens` 262144），静态目录原先写死的 `available: false` 与「Ultra plan only」说明已过时，已移除；可用性继续由账号自己的实时目录决定
+- **模型排序对齐后端 Recommended 顺序**：`agentModelSorts` 是 Neon → **Carbon** → Argon → Hydrogen，Carbon 之前没有 `sortRank`（落到 Infinity，排到整个 Gemini 4 家族最后），现在补上 1，Argon/Hydrogen 顺延为 2/3
+- **下架标记改为由后端 `tagTitle` 驱动**：`tagTitle` 为 `Leaving Soon` / `Notice` 的实体，其 `tagDescription` 会挂到折叠后的公共模型上并标 `deprecated`。此前只有静态表里手写的 GPT-OSS / Claude 4.6 会被标记，于是后端已经通告「Leaving on Nov 30」的 **Gemini 4 Argon** 与 **Gemini 3.8 Flash** 在设置页里完全没有任何提示。静态描述仍在后端不说话时作为回退
+
+### 验证
+- `npm run check` 全量 **341/341**（v0.16.0 基线 336 + 5 条）：`readImageRequest` 收到新形状目标（并断言旧 `maxBytes` 不再出现、`imageTargetBytes ≤ maxImageBytes`）、目标满足宿主附件存储准入规则（含超大尺寸投影）、后端下架通告上浮到公共模型（静态表已登记家族与后端首发家族两条路径）、无通告时静态描述保持不变、`EXHAUSTED` 经 `fromFailure` 仍带 `failure.code`
+- **反证**：把 `lib/index.js` 回退到 v0.16.0 后，新增的贴图两条与下架通告两条用例**全部失败**，恢复修复后全绿
+- **真机（同一 Google AI Pro 账号，2026-11-25）**：三端点目录探测 daily/sandbox 各 **38** 个实体、production **26** 个（含 `gemini-4-neon-*`、`gemini-4-carbon-*`、`gemini-4-hydrogen-*`），`imageGenerationModelIds: ["gemini-3.1-flash-image"]`；把客户端指纹抬到 2.30.0 / 2.40.0 目录完全一致，因此本次不升级指纹
+- **真机端到端（走插件本体，不是裸探针）**：`fetchQuotaForAccount` → 20 条公共模型；`adapter.stream` 实测 `gemini-4-neon`(high) 3128 ms、`gemini-4-carbon`(medium) 4145 ms、`claude-opus-5.5`(low) 1068 ms 均正常出文；`listModels` 16 条通过宿主目录校验
+- **贴图链路真机验证**：用宿主的 `readRequestImageFile` 跑真实 640×480 PNG —— 旧 `maxBytes` 形状 `AttachmentError [INVALID_ATTACHMENT_REF]`，新形状编码出 `image/png 640×480 267278 bytes`
+- **激活验证**：`apply()` 在模拟 0.2.3 服务面的 Context 上完整跑通（注册 `antigravity` 路由、`agent/pre-step` 监听、4 个 effect），本插件用到的 11 个 `dsh-llm` 符号在宿主上全部存在
+- 说明：未做完整 DSH GUI 端到端点击；本版本需重新安装 profile 并重启 `dsh web` 才生效
+
 ## v0.16.0 — 2026-11-21
 
 ### Added

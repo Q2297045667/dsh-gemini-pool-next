@@ -376,3 +376,64 @@ test("in-band gRPC statuses classify without an HTTP status", () => {
   const server = classifyAntigravityFailure({ body: { status: "INTERNAL", message: "Internal error." } });
   assert.equal(server.code, "SERVER");
 });
+
+/**
+ * DSH 0.2.2-alpha.2 narrowed `new LlmError(message, code)` to the host's own
+ * `BuiltinLlmFailureCode` union, so this plugin's `EXHAUSTED` code has to
+ * travel through `LlmError.fromFailure`. The runtime never rejected the old
+ * call, but the adapter must not depend on that: a future release that
+ * validates the code would turn "the pool has no usable account" into a crash
+ * instead of a diagnosable failure.
+ */
+test("a pool with no usable account reports EXHAUSTED without relying on the narrowed constructor", async () => {
+  const { AntigravityPoolAdapter } = await import("../lib/index.js");
+  const { AccountPoolManager } = await import("../lib/pool.js");
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const dir = await mkdtemp(join(tmpdir(), "gemini-pool-exhausted-"));
+  try {
+    const manager = new AccountPoolManager(join(dir, "accounts.json"), join(dir, "legacy.json"));
+    await manager.init();
+    // An account that is disabled with no way back: the pool has state, but no
+    // candidate can serve the request.
+    await manager.addOrUpdateAccount({
+      email: "disabled@example.com",
+      refresh: "refresh_disabled",
+      access: "access_disabled",
+      expires: Date.now() + 3600_000,
+      projectId: "project-disabled",
+    });
+    const account = manager.allAccounts[0];
+    await manager.updateConfig({ disableThreshold: 1 });
+    // One failure with a threshold of 1 retires the account.
+    await manager.markCooldown(account.id, 1000, "429 quota");
+
+    const settings = {
+      async read() {
+        return { catalogModels: [], enabledModelIds: [], imageGenerationModelIds: [] };
+      },
+    };
+    const adapter = new AntigravityPoolAdapter(manager, settings, () => undefined);
+    await assert.rejects(
+      async () => {
+        for await (const _chunk of adapter.stream({
+          model: "gemini-4-neon",
+          messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        })) {
+          void _chunk;
+        }
+      },
+      (error) => {
+        assert.equal(error.code, "EXHAUSTED");
+        // Every host-built LlmError carries a serializable failure beside it.
+        assert.equal(error.failure?.code, "EXHAUSTED");
+        assert.equal(error.name, "LlmError");
+        return true;
+      },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

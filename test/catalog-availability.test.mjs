@@ -168,7 +168,6 @@ test("a disabled placeholder yields an unavailable Carbon entry with the backend
   assert.equal(carbon.contextWindow, 1048576);
   assert.equal(carbon.maxTokens, 262144);
   assert.deepEqual(carbon.reasoningEfforts, ["low", "medium", "high"]);
-  assert.match(carbon.description, /Ultra/i);
 
   // Every other model keeps its own availability untouched.
   assert.equal(byId.get("gemini-4-argon").available, true);
@@ -370,4 +369,76 @@ test("the catalog adopts the context window each entity advertises", () => {
     "gemini-4-argon-high": { displayName: "Gemini 4 Argon (High)" },
   }));
   assert.equal(staticOnly.find((model) => model.id === "gemini-4-argon").contextWindow, 1048576);
+});
+
+/**
+ * The backend marks a withdrawing model with `tagTitle: "Leaving Soon"` and a
+ * `tagDescription` naming the date, and an already-announced withdrawal with a
+ * "Notice" tag. Reading that tag is what keeps the picker's badge current: the
+ * static descriptions in lib/models.js record what the backend said when this
+ * version was written and would otherwise keep claiming a model is fine long
+ * after Antigravity announced its removal (measured 2026-11-25: Argon and
+ * Gemini 3.8 Flash both carried "Leaving Soon ... on Nov 30").
+ */
+test("the catalog adopts the backend's own retirement notice for a live model", () => {
+  const catalog = parseCatalogModels(modelsPayload({
+    "gemini-4-argon-high": {
+      displayName: "Gemini 4 Argon (High)",
+      tagTitle: "Leaving Soon",
+      tagDescription: "The original Gemini 4 model for advanced workflows. Leaving on Nov 30.",
+    },
+    "gemini-4-argon-low": { displayName: "Gemini 4 Argon (Low)" },
+    "gemini-3.8-flash-high": {
+      displayName: "Gemini 3.8 Flash (High)",
+      tagTitle: "Leaving Soon",
+      tagDescription: "Use Hydrogen for better quality with lower quota usage. Leaving on Nov 30.",
+    },
+    "gemini-4-neon-high": {
+      displayName: "Gemini 4 Neon (High)",
+      tagTitle: "New",
+      tagDescription: "For most deep reasoning and complex problems",
+    },
+  }));
+
+  const argon = catalog.find((model) => model.id === "gemini-4-argon");
+  assert.equal(argon.deprecated, true, "a Leaving Soon family must be badged");
+  assert.match(argon.description, /Leaving on Nov 30/);
+  // The notice is per family, not per level entity, and stays selectable.
+  assert.equal(argon.available, true);
+
+  const flash = catalog.find((model) => model.id === "gemini-3.8-flash");
+  assert.equal(flash.deprecated, true);
+  assert.match(flash.description, /Hydrogen/);
+
+  // A model the backend tags as current is never badged.
+  const neon = catalog.find((model) => model.id === "gemini-4-neon");
+  assert.equal(neon.deprecated, undefined);
+  assert.doesNotMatch(neon.description || "", /Leaving/);
+});
+
+test("a retirement notice on a family the static table does not list still folds onto its model", () => {
+  // A backend-first model family (no MODELS row) must inherit the same badge
+  // through the level-entity consolidation path.
+  const catalog = parseCatalogModels(modelsPayload({
+    "gemini-9-orion-low": {
+      displayName: "Gemini 9 Orion (Low)",
+      tagTitle: "Leaving Soon",
+      tagDescription: "Retiring on Dec 15.",
+    },
+    "gemini-9-orion-high": { displayName: "Gemini 9 Orion (High)" },
+  }));
+  const orion = catalog.find((model) => model.id === "gemini-9-orion");
+  assert.ok(orion, "the unregistered family must still fold into one model");
+  assert.equal(orion.deprecated, true);
+  assert.match(orion.description, /Retiring on Dec 15/);
+});
+
+test("a model with no retirement tag keeps the static description", () => {
+  const catalog = parseCatalogModels(modelsPayload({
+    "gemini-4-neon-high": { displayName: "Gemini 4 Neon (High)" },
+  }));
+  const neon = catalog.find((model) => model.id === "gemini-4-neon");
+  assert.equal(neon.deprecated, undefined);
+  // The static row's own copy is untouched when the backend says nothing.
+  assert.match(neon.description, /default Gemini 4 agent model/i);
 });

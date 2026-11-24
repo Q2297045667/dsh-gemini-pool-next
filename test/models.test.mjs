@@ -272,9 +272,11 @@ test("Gemini 4 Carbon is a first-class catalog model capped at 262144", () => {
   assert.equal(carbon.contextWindow, 1048576);
   assert.equal(carbon.maxTokens, 262144);
   assert.deepEqual(carbon.reasoningEfforts, ["low", "medium", "high"]);
-  assert.match(carbon.description, /Ultra/i);
-  // Ultra-only: selectable only once the account's live catalog serves it.
-  assert.equal(carbon.available, false);
+  // The backend now serves the per-level Carbon entities on a Google AI Pro
+  // account (measured 2026-11-25: gemini-4-carbon-low/medium/high all answer
+  // 200 with a 262144 output ceiling), so the static row is no longer marked
+  // unavailable. Availability still follows the account's live catalog.
+  assert.notEqual(carbon.available, false);
   // The backend's disabled placeholder is never a public model of its own.
   assert.equal(modelById("gemini-4-carbon-disabled"), undefined);
   assert.equal(modelById("gemini-4-carbon-high"), undefined);
@@ -352,15 +354,30 @@ test("Gemini 4 Carbon matcher and entity splitter recognise live and disabled id
   assert.deepEqual(inferModelShape("gemini-4-carbon-low").reasoningEfforts, ["low", "medium", "high"]);
 });
 
-test("Gemini 4 Carbon is never a fallback target while it is unavailable", () => {
+test("an available Gemini 4 Carbon may be a fallback target, an unavailable one never is", () => {
+  // Carbon is served on a Google AI Pro account now (measured 2026-11-25), so
+  // it is a legitimate step-down target rather than a black hole.
   const argonFallbacks = familyFallbackBases("gemini-4-argon");
-  assert.equal(argonFallbacks.includes("gemini-4-carbon"), false);
-  // Every other fallback is untouched.
+  assert.ok(argonFallbacks.includes("gemini-4-carbon"));
   assert.ok(argonFallbacks.includes("gemini-3.8-flash"));
   // Carbon may still step down onto the rest of its own family.
   assert.ok(familyFallbackBases("gemini-4-carbon").includes("gemini-4-argon"));
   // Offline fallback resolution therefore cannot invent a carbon entity.
   assert.equal(staticRequestModelId("gemini-4-argon", "high"), "gemini-4-argon-high");
+
+  // The invariant that matters is about *unavailable* models: a static row the
+  // catalog marks unavailable must never be offered as a step-down target,
+  // because the backend would reject the request outright.
+  const unavailable = MODELS.filter((model) => model.available === false).map((model) => model.id);
+  for (const id of unavailable) {
+    for (const other of MODELS.map((model) => model.id)) {
+      assert.equal(
+        familyFallbackBases(other).includes(id),
+        false,
+        `${id} is unavailable and must not be a fallback target for ${other}`,
+      );
+    }
+  }
 });
 
 test("a synthetic entity set containing the disabled placeholder never routes to it", () => {
@@ -596,8 +613,9 @@ test("Gemini 4 Hydrogen joins the Gemini text family without crossing the image 
   assert.ok(fallbacks.includes("gemini-4-argon"));
   assert.ok(fallbacks.includes("gemini-3.8-flash"));
   assert.equal(fallbacks.includes("gemini-3.1-flash-image"), false);
-  // Unavailable Carbon is still never a fallback target.
-  assert.equal(fallbacks.includes("gemini-4-carbon"), false);
+  // Carbon is served on this plan now, so it is a valid step-down target — and
+  // being the backend's second Recommended family, it outranks Hydrogen.
+  assert.ok(fallbacks.includes("gemini-4-carbon"));
   // The Argon flagship can now step down onto Hydrogen when the account has it.
   assert.ok(familyFallbackBases("gemini-4-argon").includes("gemini-4-hydrogen"));
   // An image model never borrows a text model (there is no other image model).

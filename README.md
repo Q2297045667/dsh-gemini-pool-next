@@ -88,7 +88,7 @@ Gemini 的强项正好落在编程场景上：**多模态**看图、**前端与 
 
 ## 🚀 快速开始
 
-**环境要求**：DSH `>=0.2.2-rc.1 <0.3.0`（当前验证版本：0.2.2-rc.1，兼容最新改版后的 Antigravity 模型目录）。运行 `dsh --version` 查看本机版本。
+**环境要求**：DSH `>=0.2.3-alpha.2 <0.3.0`（当前验证版本：0.2.3-alpha.2，已在真机跑通对话/生图/贴图与模型目录发现）。运行 `dsh --version` 查看本机版本。
 
 **1. 安装插件**
 
@@ -200,7 +200,7 @@ HTTPS_PROXY=http://127.0.0.1:7897
   - 经 `/antigravity-pool-next/api/config` 在 accounts.json 里配置 `visionEnabled: false`
 
   开关同时控制贴图准入与自动转述；关闭后，贴图行为恢复宿主原样。`visionModel` 指定代看模型；留空则自动挑选，设置页卡片可直接选择。
-- **已知依赖**：自动转述依赖宿主 `agent/pre-step` 事件、贴图准入依赖 `resolveModelInfo` 行为，宿主大版本升级后若贴图行为异常，需重审本节（当前在 DSH 0.2.2-rc.1 验证）。
+- **已知依赖**：自动转述依赖宿主 `agent/pre-step` 事件、贴图准入依赖 `resolveModelInfo` 行为、请求图片目标依赖 `ImageRequestTarget`（0.2.2-rc.5 起为 `maxImageBytes` + `imageTargetBytes` 双字段），宿主大版本升级后若贴图行为异常，需重审本节（当前在 DSH 0.2.3-alpha.2 验证）。
 - **排障**：贴图后模型仍收到占位文本时，先运行 `/antigravity-doctor`，查看 `visionBridge` / `visionShim` 两行。两行显示 `registered` + `installed` 即为正常。服务端日志里，`[Antigravity Pool Vision]` 前缀的行记录桥的每一步判定（请求进入、模型判定、改写结果或放行原因）。贴图后一条前缀行都没有，说明事件没有到达桥。
 
 ## 🤝 与上游插件共存
