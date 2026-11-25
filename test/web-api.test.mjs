@@ -30,9 +30,7 @@ async function createApi(t, { accountCount = 2 } = {}) {
   }
 
   let definition;
-  let rejection;
   const events = [];
-  const admittedRequests = [];
   const ctx = {
     emit: (event) => events.push(event),
     inject(_services, callback) {
@@ -44,19 +42,21 @@ async function createApi(t, { accountCount = 2 } = {}) {
             return () => {};
           },
         },
-        connection: {
-          admit(request) {
-            admittedRequests.push(request);
-            return rejection ? { rejection } : {};
-          },
-        },
       });
     },
   };
   registerWebApi(ctx, pool, settings);
   assert.equal(definition.path, "/antigravity-pool-next/api");
 
-  async function request(path = "status", { method = "GET", body, raw, chunks } = {}) {
+  // The WebServer admits the route (auth: "required") and hands the handler
+  // the admitted Peer. `peer: null` models a call that somehow reached the
+  // handler without admission.
+  const PEER = { kind: "peer" };
+
+  async function request(path = "status", { method = "GET", body, raw, chunks, peer } = {}) {
+    // `peer` is undefined by default; an explicit `null` models "no admitted
+    // Peer reached the handler".
+    const admittedPeer = peer === undefined ? PEER : peer;
     const payload = raw ?? (body === undefined ? "" : JSON.stringify(body));
     const req = Readable.from(chunks ?? (payload ? [Buffer.from(payload)] : []));
     req.method = method;
@@ -72,7 +72,7 @@ async function createApi(t, { accountCount = 2 } = {}) {
         result.text = text;
       },
     };
-    await definition.handler(req, response);
+    await definition.handler(req, response, admittedPeer);
     result.body = result.headers["content-type"]?.startsWith("application/json")
       ? JSON.parse(result.text)
       : undefined;
@@ -80,8 +80,7 @@ async function createApi(t, { accountCount = 2 } = {}) {
   }
 
   return {
-    pool, settings, poolFile, settingsFile, legacyFile, request, events, admittedRequests,
-    reject: (status) => { rejection = status; },
+    pool, settings, poolFile, settingsFile, legacyFile, request, events, definition,
   };
 }
 
@@ -244,17 +243,18 @@ test("quota refresh updates all accounts concurrently and survives a new manager
   assert.equal((await api.request("quota")).status, 200);
 });
 
-test("host admission rejects unauthorized and forbidden requests before mutations", async (t) => {
+test("the route declares required admission and never serves state without a Peer", async (t) => {
   const api = await createApi(t);
+  // WebServer owns the fence: an unauthenticated request never reaches the
+  // handler, so the registration must ask for `required` admission.
+  assert.equal(api.definition.auth, "required");
   const before = await readFile(api.poolFile, "utf8");
-  for (const status of [401, 403]) {
-    api.reject(status);
-    const response = await api.request("logout", { method: "POST" });
-    assert.equal(response.status, status);
-    assert.equal(response.text, status === 401 ? "unauthorized" : "forbidden");
-    assert.equal(await readFile(api.poolFile, "utf8"), before);
-  }
-  assert.equal(api.admittedRequests.length, 2);
+  // A handler call that somehow arrives without an admitted Peer must refuse
+  // instead of serving pool state.
+  const response = await api.request("logout", { method: "POST", peer: null });
+  assert.equal(response.status, 401);
+  assert.equal(response.text, "unauthorized");
+  assert.equal(await readFile(api.poolFile, "utf8"), before);
   assert.equal(api.events.length, 0);
 });
 

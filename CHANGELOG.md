@@ -2,6 +2,20 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v0.17.1 — 2026-11-25
+
+### Fixed
+- **设置页整体打不开、只显示 `invalid-json`（严重）**：Web API 在每个端点上都返回**空 body 的 400**，设置卡片 `response.json()` 解析失败，于是抛 `invalid-json`。根因是 `registerWebApi` 自行调用了 `webCtx.connection.admit(request)`，而宿主从 **0.2.2-rc.2** 起把准入完全收归 WebServer：路由不带 `auth` 时默认 `required`，WebServer 在 handler 之前就完成 Host/Origin 与 Cookie 校验并回 401/403，然后把已准入的 Peer 作为第三个参数传进来（官方升级指南第 5 条：`admit` 只给 Provider 自己用）。`connection` 对渲染层是可选服务，一旦解析不到就是 `undefined`，这行解引用在 **try 块之外**抛出 `TypeError: Cannot read properties of undefined (reading 'admit')`，被 WebServer 兜成空 body 的 400 —— 客户端看起来就是「invalid-json」
+  - 现在路由显式声明 `auth: "required"`，handler 改为消费 WebServer 传入的 `peer`；拿不到 Peer 时直接回 `401 unauthorized`（绝不对外提供池状态或凭据）
+  - `ctx.inject` 只再依赖 `webServer`，不再因为可选服务缺失而崩
+  - URL 解析移进 try 块，任何异常都会走结构化 JSON 错误而不是空 body，同类故障以后会显示真实原因而不是 `invalid-json`
+
+### 验证
+- `npm run check` 全量 **341/341**
+- **复现→修复**：在只提供 `webServer`（无 `connection`）的注入面下，旧代码 `TypeError: Cannot read properties of undefined (reading 'admit')` → 新代码 `200`；无 Peer / null Peer → `401 unauthorized`
+- **真机**：真实 `dsh web` 上用带 Cookie 的请求打 `/antigravity-pool-next/api/status`，修复前 `400`（body 为空，size=0）→ 修复后返回正常 JSON
+- 说明：本版本需重新安装 profile 并重启 `dsh web` 才生效
+
 ## v0.17.0 — 2026-11-25
 
 本次是「适配宿主 0.2.3-alpha.2 + 真机复核模型目录」的版本，并修掉了两个线上会直接打断请求的缺陷。

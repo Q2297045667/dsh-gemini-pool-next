@@ -154,6 +154,7 @@ function routeFor(host, path) {
 async function requestStatus(host, prefix = WEB_API_PREFIX) {
   const route = routeFor(host, prefix);
   const result = { status: 0, body: undefined };
+  // WebServer admits the route (auth: "required") and passes the Peer through.
   await route.handler({ method: "GET", url: `${prefix}/status`, headers: {} }, {
     writeHead(status) {
       result.status = status;
@@ -161,7 +162,7 @@ async function requestStatus(host, prefix = WEB_API_PREFIX) {
     end(text) {
       result.body = JSON.parse(text);
     },
-  });
+  }, { kind: "peer" });
   return result;
 }
 

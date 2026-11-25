@@ -64,10 +64,12 @@ const CARBON_DISABLED = {
   thinkingLevel: 2,
 };
 
+/** WebServer admits the route (`auth: "required"`) and passes the Peer here. */
+const PEER = { kind: "peer" };
+
 function apiHandler(pool, settings) {
   let handler;
   const webCtx = {
-    connection: { admit: () => ({}) },
     effect: (fn) => fn(),
     webServer: { register: (route) => { handler = route.handler; return () => {}; } },
   };
@@ -79,7 +81,7 @@ function apiHandler(pool, settings) {
     await handler({ method: "GET", url: `/antigravity-pool-next/api/${path}` }, {
       writeHead(value) { status = value; },
       end(value) { body = JSON.parse(value); },
-    });
+    }, PEER);
     assert.equal(status, 200);
     assert.equal(body.ok, true);
     return body.value;

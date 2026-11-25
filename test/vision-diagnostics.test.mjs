@@ -42,6 +42,9 @@ function makeResponse() {
   };
 }
 
+/** WebServer admits the route and passes this Peer to the handler. */
+const PEER = { kind: "peer" };
+
 function makeWebCtx({ rejection } = {}) {
   let route;
   const webCtx = {
@@ -71,7 +74,7 @@ test("web api registers GET /antigravity-pool-next/api/doctor returning the doct
   assert.equal(route.path, "/antigravity-pool-next/api");
 
   const response = makeResponse();
-  await route.handler({ method: "GET", url: "/antigravity-pool-next/api/doctor" }, response);
+  await route.handler({ method: "GET", url: "/antigravity-pool-next/api/doctor" }, response, PEER);
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"], /application\/json/);
@@ -83,7 +86,7 @@ test("web api registers GET /antigravity-pool-next/api/doctor returning the doct
 
   // Read-only fence: non-GET hits the method guard, no side effects.
   const rejected = makeResponse();
-  await route.handler({ method: "POST", url: "/antigravity-pool-next/api/doctor" }, rejected);
+  await route.handler({ method: "POST", url: "/antigravity-pool-next/api/doctor" }, rejected, PEER);
   assert.equal(rejected.statusCode, 405);
   assert.equal(JSON.parse(rejected.body).error, "method-not-allowed");
 });
@@ -93,23 +96,26 @@ test("web api registers GET /antigravity-pool-next/api/doctor returning the doct
 // request must be rejected before any route logic — no pool state, no
 // credentials, no doctor text leaks to a bare curl.
 for (const rejection of [401, 403]) {
-  test(`web api rejects requests the connection fence refuses (${rejection})`, async () => {
+  test(`web api never serves state for a call without an admitted Peer (${rejection})`, async () => {
     const webCtx = makeWebCtx({ rejection });
     const ctx = { inject: (deps, cb) => cb(webCtx) };
     registerWebApi(ctx, {}, {});
     const route = webCtx.route;
     assert.ok(route, "registerWebApi must register a route");
+    // Admission belongs to WebServer (`auth: "required"`); the handler only
+    // has to refuse anything that arrives without a Peer.
+    assert.equal(route.auth, "required");
 
     const response = makeResponse();
-    await route.handler({ method: "GET", url: "/antigravity-pool-next/api/doctor" }, response);
-    assert.equal(response.statusCode, rejection);
-    assert.equal(response.body, rejection === 401 ? "unauthorized" : "forbidden");
+    await route.handler({ method: "GET", url: "/antigravity-pool-next/api/doctor" }, response, undefined);
+    assert.equal(response.statusCode, 401);
+    assert.equal(response.body, "unauthorized");
 
     // The login route (the natural "first contact" for a fresh setup) is
     // behind the same fence: no OAuth flow starts for a refused request.
     const loginResponse = makeResponse();
-    await route.handler({ method: "POST", url: "/antigravity-pool-next/api/login" }, loginResponse);
-    assert.equal(loginResponse.statusCode, rejection);
+    await route.handler({ method: "POST", url: "/antigravity-pool-next/api/login" }, loginResponse, undefined);
+    assert.equal(loginResponse.statusCode, 401);
   });
 }
 
